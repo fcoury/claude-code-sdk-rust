@@ -81,16 +81,16 @@
   - Handle content block parsing and validation
   - _Requirements: 6.3, 6.4_
 
-- [ ] 7. Build internal client for one-shot queries
+- [x] 7. Build internal client for one-shot queries
 
-  - [ ] 7.1 Implement InternalClient structure
+  - [x] 7.1 Implement InternalClient structure
 
     - Create InternalClient with process_query method
     - Implement async stream processing for message handling
     - Add automatic resource cleanup after query completion
     - _Requirements: 4.1, 4.2, 4.3_
 
-  - [ ] 7.2 Integrate transport and message parsing
+  - [x] 7.2 Integrate transport and message parsing
     - Connect transport layer with message parser
     - Handle error propagation through the stream
     - Ensure proper cleanup on both success and failure

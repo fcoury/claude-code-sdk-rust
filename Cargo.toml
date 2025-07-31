@@ -1,0 +1,54 @@
+[package]
+name = "claude-code-sdk"
+version = "0.1.0"
+edition = "2021"
+authors = ["Anthropic <support@anthropic.com>"]
+description = "Rust SDK for interacting with Claude Code CLI"
+license = "MIT"
+repository = "https://github.com/anthropics/claude-code-sdk-rust"
+homepage = "https://github.com/anthropics/claude-code-sdk-rust"
+documentation = "https://docs.rs/claude-code-sdk"
+keywords = ["claude", "ai", "anthropic", "cli", "sdk"]
+categories = ["api-bindings", "command-line-utilities"]
+readme = "README.md"
+rust-version = "1.70"
+
+[dependencies]
+# Async runtime and utilities
+tokio = { version = "1.0", features = ["full"] }
+tokio-stream = "0.1"
+async-stream = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+
+# Process and path utilities
+which = "4.4"
+
+# Collections and utilities
+indexmap = "2.0"
+
+[dev-dependencies]
+tokio-test = "0.4"
+rstest = "0.18"
+tempfile = "3.8"
+
+[lib]
+name = "claude_code_sdk"
+path = "src/lib.rs"
+
+[[example]]
+name = "quick_start"
+path = "examples/quick_start.rs"
+
+[[example]]
+name = "streaming_mode"
+path = "examples/streaming_mode.rs"
+
+[[example]]
+name = "error_handling"
+path = "examples/error_handling.rs"

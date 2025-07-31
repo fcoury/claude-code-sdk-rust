@@ -14,23 +14,23 @@
   - Add structured error data for debugging (original JSON, context)
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 11.4_
 
-- [ ] 3. Implement core type system with serde support
+- [x] 3. Implement core type system with serde support
 
-  - [ ] 3.1 Create message type definitions
+  - [x] 3.1 Create message type definitions
 
     - Define UserMessage, AssistantMessage, SystemMessage, and ResultMessage structs
     - Implement serde serialization/deserialization with proper field attributes
     - Create Message enum with tagged variants for type discrimination
     - _Requirements: 1.1, 1.2, 1.3_
 
-  - [ ] 3.2 Implement content block system
+  - [x] 3.2 Implement content block system
 
     - Define TextBlock, ToolUseBlock, and ToolResultBlock structs
     - Create ContentBlock enum with proper serde tagging
     - Implement MessageContent enum for string vs blocks handling
     - _Requirements: 1.1, 1.2_
 
-  - [ ] 3.3 Create configuration types with builder pattern
+  - [x] 3.3 Create configuration types with builder pattern
     - Define PermissionMode enum and McpServerConfig variants
     - Implement ClaudeCodeOptions struct with all configuration fields
     - Create ClaudeCodeOptionsBuilder with fluent method chaining

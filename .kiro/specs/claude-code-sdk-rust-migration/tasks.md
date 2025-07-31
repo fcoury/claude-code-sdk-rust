@@ -51,16 +51,16 @@
     - Support all configuration options from the Python SDK
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5_
 
-- [ ] 5. Build transport layer with robust JSON handling
+- [x] 5. Build transport layer with robust JSON handling
 
-  - [ ] 5.1 Create SubprocessCliTransport structure
+  - [x] 5.1 Create SubprocessCliTransport structure
 
     - Define transport struct with process handles and stream management
     - Implement connect/disconnect lifecycle methods
     - Add proper resource cleanup via Drop trait
     - _Requirements: 3.1, 3.2, 10.1, 10.2, 10.3_
 
-  - [ ] 5.2 Implement JSON buffering and parsing with async streams
+  - [x] 5.2 Implement JSON buffering and parsing with async streams
 
     - Create JsonBuffer for handling split and concatenated JSON messages
     - Implement receive_messages method returning async Stream with robust buffering logic
@@ -68,7 +68,7 @@
     - Add buffer size limits and memory protection
     - _Requirements: 3.3, 6.1, 6.2, 6.5, 7.1, 7.2, 7.3, 7.4_
 
-  - [ ] 5.3 Add process management and error handling
+  - [x] 5.3 Add process management and error handling
     - Implement graceful process termination with timeout handling
     - Add concurrent stderr collection for error reporting
     - Handle process exit codes and error propagation

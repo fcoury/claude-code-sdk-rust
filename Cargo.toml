@@ -29,6 +29,10 @@ thiserror = "1.0"
 # Process and path utilities
 which = "4.4"
 
+# Unix signal handling (for graceful process termination)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Collections and utilities
 indexmap = "2.0"
 

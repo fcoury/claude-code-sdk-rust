@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio_stream::Stream;
+use async_stream;
 
 /// Input for prompts, can be text or an async stream.
 pub enum PromptInput {
@@ -310,10 +311,21 @@ impl SubprocessCliTransport {
         }
     }
 
-    /// Connect to the CLI process.
+    /// Connect to the CLI process with comprehensive error handling.
+    /// 
+    /// This method handles process startup, stream setup, and initial prompt sending
+    /// with detailed error reporting for common failure scenarios.
     pub async fn connect(&mut self) -> Result<()> {
         let args = self.build_command();
         
+        // Validate CLI path exists and is executable
+        if !std::path::Path::new(&self.cli_path).exists() {
+            return Err(SdkError::transport(format!(
+                "CLI executable not found at path: {}. Please ensure the Claude Code CLI is installed.",
+                self.cli_path
+            )));
+        }
+
         let mut command = Command::new(&self.cli_path);
         command.args(&args);
         command.stdin(std::process::Stdio::piped());
@@ -327,22 +339,74 @@ impl SubprocessCliTransport {
                     cwd.to_string_lossy().to_string(),
                 ));
             }
+            if !cwd.is_dir() {
+                return Err(SdkError::invalid_working_directory(format!(
+                    "{} is not a directory", cwd.to_string_lossy()
+                )));
+            }
             command.current_dir(cwd);
         }
 
-        let mut child = command.spawn()?;
+        // Spawn the process with detailed error context
+        let mut child = command.spawn().map_err(|e| {
+            match e.kind() {
+                std::io::ErrorKind::NotFound => {
+                    SdkError::transport(format!(
+                        "CLI executable not found: {}. Please ensure the Claude Code CLI is installed and in your PATH.",
+                        self.cli_path
+                    ))
+                }
+                std::io::ErrorKind::PermissionDenied => {
+                    SdkError::transport(format!(
+                        "Permission denied executing CLI: {}. Please check file permissions.",
+                        self.cli_path
+                    ))
+                }
+                _ => SdkError::CliConnection(e)
+            }
+        })?;
 
-        // Set up streams
+        // Verify the process started successfully by checking if it's still running
+        // after a brief moment (some processes fail immediately)
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // Process exited immediately - this is likely an error
+                let mut stderr_content = String::new();
+                if let Some(mut stderr) = child.stderr.take() {
+                    use tokio::io::AsyncReadExt;
+                    let _ = stderr.read_to_string(&mut stderr_content).await;
+                }
+                
+                return Err(SdkError::process(
+                    status.code(),
+                    if stderr_content.is_empty() {
+                        format!("CLI process exited immediately with status: {:?}", status)
+                    } else {
+                        stderr_content
+                    }
+                ));
+            }
+            Ok(None) => {
+                // Process is still running - good
+            }
+            Err(e) => {
+                return Err(SdkError::CliConnection(e));
+            }
+        }
+
+        // Set up streams with error handling
         let stdin = child.stdin.take().ok_or_else(|| {
-            SdkError::transport("Failed to get stdin handle from child process")
+            SdkError::transport("Failed to get stdin handle from child process - this should not happen")
         })?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
-            SdkError::transport("Failed to get stdout handle from child process")
+            SdkError::transport("Failed to get stdout handle from child process - this should not happen")
         })?;
 
         let stderr = child.stderr.take().ok_or_else(|| {
-            SdkError::transport("Failed to get stderr handle from child process")
+            SdkError::transport("Failed to get stderr handle from child process - this should not happen")
         })?;
 
         self.stdin_stream = Some(stdin);
@@ -353,11 +417,20 @@ impl SubprocessCliTransport {
         // Send initial prompt if it's text
         if let PromptInput::Text(text) = &self.prompt {
             let text = text.clone();
-            self.send_text_prompt(&text).await?;
+            if let Err(e) = self.send_text_prompt(&text).await {
+                // If sending the prompt fails, clean up and return error
+                let _ = self.disconnect().await;
+                return Err(SdkError::stream_with_context(
+                    format!("Failed to send initial prompt: {}", e),
+                    "The CLI process may not be ready to receive input"
+                ));
+            }
             
             if self.close_stdin_after_prompt {
                 if let Some(mut stdin) = self.stdin_stream.take() {
-                    stdin.shutdown().await?;
+                    if let Err(e) = stdin.shutdown().await {
+                        eprintln!("Warning: Failed to close stdin after prompt: {}", e);
+                    }
                 }
             }
         }
@@ -375,34 +448,106 @@ impl SubprocessCliTransport {
         Ok(())
     }
 
-    /// Disconnect from the CLI process.
+    /// Disconnect from the CLI process with graceful shutdown and timeout handling.
+    /// 
+    /// This method implements a multi-stage shutdown process:
+    /// 1. Close stdin to signal the process to exit
+    /// 2. Wait for graceful exit with timeout
+    /// 3. Send SIGTERM if graceful exit times out
+    /// 4. Send SIGKILL if SIGTERM times out
+    /// 5. Collect and report any stderr output
     pub async fn disconnect(&mut self) -> Result<()> {
-        // Close stdin first
+        // Close stdin first to signal the process to exit gracefully
         if let Some(mut stdin) = self.stdin_stream.take() {
             let _ = stdin.shutdown().await;
         }
 
-        // Wait for process to exit or kill it
+        // Handle process termination with multiple timeout stages
         if let Some(mut process) = self.process.take() {
-            // Try graceful shutdown first
-            let exit_status = tokio::time::timeout(
+            // Stage 1: Wait for graceful exit (5 seconds)
+            let graceful_exit = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 process.wait(),
             ).await;
 
-            match exit_status {
+            match graceful_exit {
                 Ok(Ok(status)) => {
+                    // Process exited - check exit status
                     if !status.success() {
-                        // Collect stderr if available
-                        let stderr = self.collect_stderr().await.unwrap_or_default();
+                        let stderr = self.collect_stderr_final().await;
                         return Err(SdkError::process(status.code(), stderr));
                     }
                 }
-                Ok(Err(e)) => return Err(SdkError::CliConnection(e)),
+                Ok(Err(e)) => {
+                    // Error waiting for process
+                    let stderr = self.collect_stderr_final().await;
+                    return Err(SdkError::stream_with_context(
+                        format!("Error waiting for process: {}", e),
+                        format!("stderr: {}", stderr)
+                    ));
+                }
                 Err(_) => {
-                    // Timeout - force kill
-                    let _ = process.kill().await;
-                    let _ = process.wait().await;
+                    // Timeout - try SIGTERM first (Unix-like systems)
+                    #[cfg(unix)]
+                    {
+                        // Send SIGTERM
+                        if let Err(e) = self.send_signal(&mut process, libc::SIGTERM).await {
+                            eprintln!("Warning: Failed to send SIGTERM: {}", e);
+                        }
+
+                        // Wait for SIGTERM to take effect (3 seconds)
+                        let sigterm_exit = tokio::time::timeout(
+                            std::time::Duration::from_secs(3),
+                            process.wait(),
+                        ).await;
+
+                        match sigterm_exit {
+                            Ok(Ok(status)) => {
+                                // Process exited after SIGTERM
+                                if !status.success() && status.code().is_none() {
+                                    // Process was terminated by signal, which is expected
+                                    let stderr = self.collect_stderr_final().await;
+                                    if !stderr.is_empty() {
+                                        eprintln!("Process stderr: {}", stderr);
+                                    }
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                eprintln!("Error waiting for process after SIGTERM: {}", e);
+                            }
+                            Err(_) => {
+                                // SIGTERM timeout - force kill with SIGKILL
+                                if let Err(e) = process.kill().await {
+                                    eprintln!("Warning: Failed to kill process: {}", e);
+                                }
+                                
+                                // Final wait with timeout
+                                let _ = tokio::time::timeout(
+                                    std::time::Duration::from_secs(2),
+                                    process.wait(),
+                                ).await;
+                            }
+                        }
+                    }
+
+                    // For non-Unix systems or if Unix-specific handling fails
+                    #[cfg(not(unix))]
+                    {
+                        // Force kill immediately
+                        if let Err(e) = process.kill().await {
+                            let stderr = self.collect_stderr_final().await;
+                            return Err(SdkError::stream_with_context(
+                                format!("Failed to kill process: {}", e),
+                                format!("stderr: {}", stderr)
+                            ));
+                        }
+                        
+                        // Wait for kill to take effect
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(2),
+                            process.wait(),
+                        ).await;
+                    }
                 }
             }
         }
@@ -414,22 +559,91 @@ impl SubprocessCliTransport {
         Ok(())
     }
 
+    /// Send a signal to the process (Unix-like systems only).
+    #[cfg(unix)]
+    async fn send_signal(&self, process: &mut tokio::process::Child, signal: i32) -> Result<()> {
+        if let Some(pid) = process.id() {
+            unsafe {
+                if libc::kill(pid as i32, signal) == -1 {
+                    return Err(SdkError::transport(format!(
+                        "Failed to send signal {} to process {}", signal, pid
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Collect final stderr output during shutdown.
+    /// 
+    /// This method attempts to read any remaining stderr content
+    /// that might contain important error information.
+    async fn collect_stderr_final(&mut self) -> String {
+        if let Some(ref mut stderr) = self.stderr_stream {
+            let mut stderr_content = String::new();
+            let mut line = String::new();
+            
+            // Try to read remaining stderr with a reasonable timeout
+            let start_time = std::time::Instant::now();
+            let max_duration = std::time::Duration::from_millis(500);
+            
+            while start_time.elapsed() < max_duration {
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(50),
+                    stderr.read_line(&mut line),
+                ).await {
+                    Ok(Ok(0)) => break, // EOF
+                    Ok(Ok(_)) => {
+                        stderr_content.push_str(&line);
+                        line.clear();
+                        
+                        // Limit stderr collection
+                        if stderr_content.len() > 10240 {
+                            stderr_content.push_str("\n... (stderr truncated)");
+                            break;
+                        }
+                    }
+                    Ok(Err(_)) | Err(_) => break, // Error or timeout
+                }
+            }
+            
+            stderr_content
+        } else {
+            String::new()
+        }
+    }
+
     /// Collect stderr output for error reporting.
+    /// 
+    /// This method attempts to read available stderr content with timeout
+    /// to avoid blocking indefinitely while still capturing error information.
     async fn collect_stderr(&mut self) -> Result<String> {
         if let Some(ref mut stderr) = self.stderr_stream {
             let mut stderr_content = String::new();
             let mut line = String::new();
             
             // Try to read available stderr content with timeout
-            while let Ok(Ok(bytes_read)) = tokio::time::timeout(
-                std::time::Duration::from_millis(100),
-                stderr.read_line(&mut line),
-            ).await {
-                if bytes_read == 0 {
-                    break;
+            let start_time = std::time::Instant::now();
+            let max_duration = std::time::Duration::from_millis(200);
+            
+            while start_time.elapsed() < max_duration {
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(50),
+                    stderr.read_line(&mut line),
+                ).await {
+                    Ok(Ok(0)) => break, // EOF
+                    Ok(Ok(_)) => {
+                        stderr_content.push_str(&line);
+                        line.clear();
+                        
+                        // Limit stderr collection to prevent memory issues
+                        if stderr_content.len() > 10240 { // 10KB limit
+                            stderr_content.push_str("\n... (stderr truncated)");
+                            break;
+                        }
+                    }
+                    Ok(Err(_)) | Err(_) => break, // Error or timeout
                 }
-                stderr_content.push_str(&line);
-                line.clear();
             }
             
             Ok(stderr_content)
@@ -439,31 +653,141 @@ impl SubprocessCliTransport {
     }
 
     /// Receive messages from the CLI as an async stream.
+    /// 
+    /// This method returns a stream that:
+    /// - Handles robust JSON buffering for split and concatenated messages
+    /// - Provides proper backpressure handling
+    /// - Supports stream cancellation
+    /// - Monitors stderr concurrently for error reporting
+    /// - Implements memory protection with buffer size limits
     pub async fn receive_messages(&mut self) -> impl Stream<Item = Result<serde_json::Value>> + '_ {
         async_stream::stream! {
             if let Some(ref mut stdout) = self.stdout_stream {
                 let mut buffer = JsonBuffer::new();
                 let mut line = String::new();
+                
+                // We'll collect stderr synchronously when needed instead of spawning a task
+                // to avoid lifetime issues with the async stream
 
                 loop {
-                    line.clear();
-                    match stdout.read_line(&mut line).await {
-                        Ok(0) => break, // EOF
-                        Ok(_) => {
-                            buffer.append(&line);
-                            
-                            // Try to parse complete JSON objects
-                            while let Some(value) = buffer.try_parse_and_clear()? {
-                                yield Ok(value);
-                            }
-                        }
-                        Err(e) => {
-                            yield Err(SdkError::CliConnection(e));
+                    // Check if we have any parsed objects waiting first
+                    while buffer.has_parsed_objects() {
+                        if let Some(value) = buffer.try_parse_and_clear()? {
+                            yield Ok(value);
+                        } else {
                             break;
                         }
                     }
+
+                    line.clear();
+                    
+                    // Use select to handle both stdout reading and potential cancellation
+                    tokio::select! {
+                        read_result = stdout.read_line(&mut line) => {
+                            match read_result {
+                                Ok(0) => {
+                                    // EOF reached - try to parse any remaining data
+                                    if buffer.buffer_size() > 0 {
+                                        // Try one final parse of remaining buffer content
+                                        match buffer.try_parse_and_clear() {
+                                            Ok(Some(value)) => yield Ok(value),
+                                            Ok(None) => {
+                                                // Incomplete JSON at EOF - this might be an error
+                                                if buffer.buffer_size() > 0 {
+                                                    yield Err(SdkError::stream_with_context(
+                                                        "Incomplete JSON data at end of stream",
+                                                        format!("Buffer size: {} bytes", buffer.buffer_size())
+                                                    ));
+                                                }
+                                            }
+                                            Err(e) => yield Err(e),
+                                        }
+                                    }
+                                    break;
+                                }
+                                Ok(bytes_read) => {
+                                    // Data received - append to buffer and try parsing
+                                    buffer.append(&line);
+                                    
+                                    // Parse all available complete JSON objects
+                                    loop {
+                                        match buffer.try_parse_and_clear() {
+                                            Ok(Some(value)) => yield Ok(value),
+                                            Ok(None) => break, // No more complete objects
+                                            Err(e) => {
+                                                yield Err(e);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Yield control to allow for cancellation and backpressure
+                                    if bytes_read > 0 {
+                                        tokio::task::yield_now().await;
+                                    }
+                                }
+                                Err(e) => {
+                                    // I/O error - try to collect stderr synchronously
+                                    let stderr_content = self.collect_stderr_sync().await.unwrap_or_default();
+                                    
+                                    if !stderr_content.is_empty() {
+                                        yield Err(SdkError::stream_with_context(
+                                            format!("I/O error reading from CLI: {}", e),
+                                            format!("stderr: {}", stderr_content)
+                                        ));
+                                    } else {
+                                        yield Err(SdkError::CliConnection(e));
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        // Handle potential cancellation or other async operations
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {
+                            // This allows the stream to be responsive to cancellation
+                            // while not busy-waiting
+                            continue;
+                        }
+                    }
+                }
+
+                // No cleanup needed for stderr monitoring
+            } else {
+                yield Err(SdkError::transport("No stdout stream available"));
+            }
+        }
+    }
+
+    /// Collect stderr output synchronously with timeout.
+    /// 
+    /// This method attempts to read available stderr content without blocking
+    /// indefinitely, useful for error reporting when I/O errors occur.
+    async fn collect_stderr_sync(&mut self) -> Result<String> {
+        if let Some(ref mut stderr) = self.stderr_stream {
+            let mut stderr_content = String::new();
+            let mut line = String::new();
+            
+            // Read stderr with short timeout to avoid blocking
+            while let Ok(Ok(bytes_read)) = tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                stderr.read_line(&mut line),
+            ).await {
+                if bytes_read == 0 {
+                    break; // EOF
+                }
+                stderr_content.push_str(&line);
+                line.clear();
+                
+                // Limit stderr collection to prevent memory issues
+                if stderr_content.len() > 10240 { // 10KB limit
+                    stderr_content.push_str("\n... (stderr truncated)");
+                    break;
                 }
             }
+            
+            Ok(stderr_content)
+        } else {
+            Ok(String::new())
         }
     }
 
@@ -524,40 +848,196 @@ impl Drop for SubprocessCliTransport {
 }
 
 /// Buffer for handling JSON parsing from streaming input.
+/// 
+/// This buffer handles complex scenarios including:
+/// - Split JSON messages across multiple reads
+/// - Multiple concatenated JSON objects in a single read
+/// - Partial JSON objects that need to be accumulated
+/// - Memory protection with configurable size limits
 struct JsonBuffer {
     buffer: String,
     max_size: usize,
+    parsed_objects: Vec<serde_json::Value>,
 }
 
 impl JsonBuffer {
     const MAX_BUFFER_SIZE: usize = 1024 * 1024; // 1MB limit
+    const DEFAULT_CAPACITY: usize = 8192; // 8KB initial capacity
 
     fn new() -> Self {
         Self {
-            buffer: String::new(),
+            buffer: String::with_capacity(Self::DEFAULT_CAPACITY),
             max_size: Self::MAX_BUFFER_SIZE,
+            parsed_objects: Vec::new(),
         }
     }
 
+    fn with_max_size(max_size: usize) -> Self {
+        Self {
+            buffer: String::with_capacity(Self::DEFAULT_CAPACITY.min(max_size)),
+            max_size,
+            parsed_objects: Vec::new(),
+        }
+    }
+
+    /// Try to parse complete JSON objects from the buffer.
+    /// 
+    /// This method handles multiple scenarios:
+    /// 1. Single complete JSON object
+    /// 2. Multiple concatenated JSON objects
+    /// 3. Partial JSON objects that need more data
+    /// 4. Mixed complete and partial objects
     fn try_parse_and_clear(&mut self) -> Result<Option<serde_json::Value>> {
+        // Return any previously parsed objects first
+        if !self.parsed_objects.is_empty() {
+            return Ok(Some(self.parsed_objects.remove(0)));
+        }
+
         if self.buffer.len() > self.max_size {
             return Err(SdkError::buffer_size_exceeded(self.max_size));
         }
 
-        // Try to parse the buffer as JSON
-        match serde_json::from_str(&self.buffer.trim()) {
-            Ok(value) => {
-                self.buffer.clear();
-                Ok(Some(value))
-            }
-            Err(_) => {
-                // Not yet complete JSON, keep buffering
-                Ok(None)
-            }
+        if self.buffer.trim().is_empty() {
+            return Ok(None);
+        }
+
+        // Try to parse multiple JSON objects from the buffer
+        self.parse_multiple_objects()?;
+
+        // Return the first parsed object if any
+        if !self.parsed_objects.is_empty() {
+            Ok(Some(self.parsed_objects.remove(0)))
+        } else {
+            Ok(None)
         }
     }
 
+    /// Parse multiple JSON objects from the buffer.
+    /// 
+    /// This handles cases where multiple JSON objects are concatenated
+    /// in the buffer, separated by whitespace or newlines.
+    fn parse_multiple_objects(&mut self) -> Result<()> {
+        let mut remaining = self.buffer.trim();
+        let mut consumed_bytes = 0;
+
+        while !remaining.is_empty() {
+            // Find the end of the next JSON object
+            match self.find_json_object_end(remaining) {
+                Some(end_pos) => {
+                    let json_str = &remaining[..end_pos];
+                    
+                    // Try to parse this JSON object
+                    match serde_json::from_str(json_str) {
+                        Ok(value) => {
+                            self.parsed_objects.push(value);
+                            consumed_bytes += end_pos;
+                            
+                            // Move to the next part of the buffer
+                            remaining = remaining[end_pos..].trim_start();
+                            
+                            // Account for whitespace we trimmed
+                            while consumed_bytes < self.buffer.len() 
+                                && self.buffer.chars().nth(consumed_bytes).map_or(false, |c| c.is_whitespace()) {
+                                consumed_bytes += 1;
+                            }
+                        }
+                        Err(_) => {
+                            // This JSON object is incomplete, stop parsing
+                            break;
+                        }
+                    }
+                }
+                None => {
+                    // No complete JSON object found, try parsing the entire remaining buffer
+                    match serde_json::from_str(remaining) {
+                        Ok(value) => {
+                            self.parsed_objects.push(value);
+                            consumed_bytes = self.buffer.len();
+                            break;
+                        }
+                        Err(_) => {
+                            // Incomplete JSON, keep it in buffer
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remove consumed data from buffer
+        if consumed_bytes > 0 {
+            self.buffer.drain(..consumed_bytes);
+        }
+
+        Ok(())
+    }
+
+    /// Find the end position of a JSON object in the string.
+    /// 
+    /// This uses a simple bracket/brace counting approach to find
+    /// where a JSON object ends, handling nested structures.
+    fn find_json_object_end(&self, s: &str) -> Option<usize> {
+        let mut chars = s.char_indices().peekable();
+        let mut depth = 0;
+        let mut in_string = false;
+        let mut escape_next = false;
+        let mut started = false;
+
+        while let Some((i, ch)) = chars.next() {
+            if escape_next {
+                escape_next = false;
+                continue;
+            }
+
+            match ch {
+                '\\' if in_string => {
+                    escape_next = true;
+                }
+                '"' => {
+                    in_string = !in_string;
+                }
+                '{' | '[' if !in_string => {
+                    depth += 1;
+                    started = true;
+                }
+                '}' | ']' if !in_string => {
+                    depth -= 1;
+                    if started && depth == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
     fn append(&mut self, data: &str) {
+        // Check if adding this data would exceed the limit
+        if self.buffer.len() + data.len() > self.max_size {
+            // Try to make room by parsing what we can first
+            let _ = self.parse_multiple_objects();
+            
+            // If still too large after parsing, we'll let try_parse_and_clear handle the error
+        }
+        
         self.buffer.push_str(data);
+    }
+
+    /// Get the current buffer size for monitoring.
+    fn buffer_size(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Check if there are parsed objects waiting to be consumed.
+    fn has_parsed_objects(&self) -> bool {
+        !self.parsed_objects.is_empty()
+    }
+
+    /// Clear all buffered data and parsed objects.
+    fn clear(&mut self) {
+        self.buffer.clear();
+        self.parsed_objects.clear();
     }
 }

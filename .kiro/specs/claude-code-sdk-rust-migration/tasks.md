@@ -36,16 +36,16 @@
     - Create ClaudeCodeOptionsBuilder with fluent method chaining
     - _Requirements: 1.3, 1.4, 11.3_
 
-- [ ] 4. Create CLI discovery and process management
+- [x] 4. Create CLI discovery and process management
 
-  - [ ] 4.1 Implement CLI discovery logic
+  - [x] 4.1 Implement CLI discovery logic
 
     - Create find_cli function that searches standard installation paths
     - Provide helpful error messages for missing Node.js or claude-code CLI
     - Support custom CLI path specification
     - _Requirements: 9.1, 9.2, 9.3, 9.4_
 
-  - [ ] 4.2 Implement command building
+  - [x] 4.2 Implement command building
     - Create build_command method that converts ClaudeCodeOptions to CLI arguments
     - Handle streaming vs string mode argument differences
     - Support all configuration options from the Python SDK

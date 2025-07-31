@@ -90,6 +90,86 @@ impl Default for InternalClient {
 }
 
 /// Interactive client for bidirectional conversations with Claude.
+///
+/// [`ClaudeSDKClient`] provides a stateful interface for conducting multi-turn conversations
+/// with Claude. Unlike the one-shot [`query`](crate::query) function, this client maintains
+/// a persistent connection to the CLI process, allowing for efficient back-and-forth
+/// communication without the overhead of process startup for each message.
+///
+/// # Features
+///
+/// - **Persistent Connection**: Maintains a single CLI process for multiple interactions
+/// - **Session Management**: Tracks session IDs for conversation continuity
+/// - **Stream-based Communication**: Async streams for real-time message processing
+/// - **Interrupt Support**: Can send interrupt signals to cancel ongoing operations
+/// - **Resource Management**: Automatic cleanup with explicit disconnect option
+///
+/// # Lifecycle
+///
+/// 1. **Create**: Use [`new`](Self::new) to create a client instance
+/// 2. **Connect**: Call [`connect`](Self::connect) to establish CLI connection
+/// 3. **Interact**: Use [`query`](Self::query) and [`receive_messages`](Self::receive_messages) for communication
+/// 4. **Cleanup**: Call [`disconnect`](Self::disconnect) for guaranteed resource cleanup
+///
+/// # Examples
+///
+/// ## Basic Interactive Session
+///
+/// ```rust,no_run
+/// use claude_code_sdk::{ClaudeSDKClient, PromptInput, Message};
+/// use tokio_stream::StreamExt;
+///
+/// #[tokio::main]
+/// async fn main() -> claude_code_sdk::Result<()> {
+///     let mut client = ClaudeSDKClient::new(None);
+///     client.connect(None).await?;
+///     
+///     // Send first message
+///     client.query(PromptInput::from("Hello, Claude!"), None).await?;
+///     
+///     // Receive response
+///     let responses = client.receive_response().await?;
+///     tokio::pin!(responses);
+///     
+///     while let Some(message) = responses.next().await {
+///         match message? {
+///             Message::Assistant(msg) => println!("Claude: {:?}", msg.content),
+///             Message::Result(_) => break,
+///             _ => {}
+///         }
+///     }
+///     
+///     // Send follow-up message
+///     client.query(PromptInput::from("Can you explain that further?"), None).await?;
+///     
+///     // Process more responses...
+///     
+///     client.disconnect().await?;
+///     Ok(())
+/// }
+/// ```
+///
+/// ## With Custom Configuration
+///
+/// ```rust,no_run
+/// use claude_code_sdk::{ClaudeSDKClient, ClaudeCodeOptions, PermissionMode};
+///
+/// #[tokio::main]
+/// async fn main() -> claude_code_sdk::Result<()> {
+///     let options = ClaudeCodeOptions::builder()
+///         .system_prompt("You are a helpful coding assistant")
+///         .permission_mode(PermissionMode::AcceptEdits)
+///         .build();
+///     
+///     let mut client = ClaudeSDKClient::new(Some(options));
+///     client.connect(None).await?;
+///     
+///     // Use the configured client...
+///     
+///     client.disconnect().await?;
+///     Ok(())
+/// }
+/// ```
 pub struct ClaudeSDKClient {
     options: ClaudeCodeOptions,
     transport: Option<SubprocessCliTransport>,
@@ -97,7 +177,32 @@ pub struct ClaudeSDKClient {
 }
 
 impl ClaudeSDKClient {
-    /// Create a new interactive client.
+    /// Create a new interactive client with optional configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Optional configuration for the client. If `None`, default options are used.
+    ///   Use [`ClaudeCodeOptions::builder()`] to create custom configurations.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new [`ClaudeSDKClient`] instance in the disconnected state.
+    /// Call [`connect`](Self::connect) to establish a connection to the CLI.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use claude_code_sdk::{ClaudeSDKClient, ClaudeCodeOptions};
+    ///
+    /// // With default options
+    /// let client = ClaudeSDKClient::new(None);
+    ///
+    /// // With custom options
+    /// let options = ClaudeCodeOptions::builder()
+    ///     .system_prompt("You are a helpful assistant")
+    ///     .build();
+    /// let client = ClaudeSDKClient::new(Some(options));
+    /// ```
     pub fn new(options: Option<ClaudeCodeOptions>) -> Self {
         Self {
             options: options.unwrap_or_default(),
@@ -106,7 +211,47 @@ impl ClaudeSDKClient {
         }
     }
 
-    /// Connect to the Claude CLI.
+    /// Connect to the Claude CLI process.
+    ///
+    /// This method establishes a connection to the Claude Code CLI and prepares the client
+    /// for interactive communication. The connection must be established before sending
+    /// queries or receiving messages.
+    ///
+    /// # Arguments
+    ///
+    /// * `prompt` - Optional initial prompt to send during connection. If `None`, the client
+    ///   starts in interactive mode ready to receive queries via [`query`](Self::query).
+    ///   If provided, the prompt will be sent immediately after connection.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on successful connection, or an error if the connection fails.
+    ///
+    /// # Errors
+    ///
+    /// - [`SdkError::CliNotFound`]: Claude Code CLI is not installed or not in PATH
+    /// - [`SdkError::NodeJsNotFound`]: Node.js runtime is not available
+    /// - [`SdkError::CliConnection`]: Failed to start or connect to the CLI process
+    /// - [`SdkError::InvalidWorkingDirectory`]: Specified working directory is invalid
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use claude_code_sdk::{ClaudeSDKClient, PromptInput};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> claude_code_sdk::Result<()> {
+    ///     let mut client = ClaudeSDKClient::new(None);
+    ///     
+    ///     // Connect without initial prompt
+    ///     client.connect(None).await?;
+    ///     
+    ///     // Or connect with initial prompt
+    ///     // client.connect(Some(PromptInput::from("Hello!"))).await?;
+    ///     
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn connect(&mut self, prompt: Option<PromptInput>) -> Result<()> {
         let prompt = prompt.unwrap_or_else(|| {
             // Create a pending stream that never yields for interactive mode
@@ -125,7 +270,62 @@ impl ClaudeSDKClient {
         Ok(())
     }
 
-    /// Send a query message to Claude.
+    /// Send a query message to Claude in the interactive session.
+    ///
+    /// This method sends a message to Claude and returns immediately. To receive Claude's
+    /// response, use [`receive_messages`](Self::receive_messages) or 
+    /// [`receive_response`](Self::receive_response) after calling this method.
+    ///
+    /// # Arguments
+    ///
+    /// * `prompt` - The prompt to send to Claude. Can be either:
+    ///   - [`PromptInput::Text`]: A simple text message
+    ///   - [`PromptInput::Stream`]: An async stream of JSON values for complex interactions
+    /// * `session_id` - Optional session ID for this query. If `None`, uses the client's
+    ///   current session ID (see [`current_session_id`](Self::current_session_id)).
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the message was sent successfully, or an error if sending failed.
+    ///
+    /// # Errors
+    ///
+    /// - [`SdkError::Transport`]: Client is not connected or communication failed
+    /// - [`SdkError::Stream`]: Empty stream provided or stream processing failed
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use claude_code_sdk::{ClaudeSDKClient, PromptInput};
+    /// use tokio_stream::StreamExt;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> claude_code_sdk::Result<()> {
+    ///     let mut client = ClaudeSDKClient::new(None);
+    ///     client.connect(None).await?;
+    ///     
+    ///     // Send a text message
+    ///     client.query(PromptInput::from("Hello, Claude!"), None).await?;
+    ///     
+    ///     // Receive the response
+    ///     let responses = client.receive_response().await?;
+    ///     tokio::pin!(responses);
+    ///     
+    ///     while let Some(message) = responses.next().await {
+    ///         // Process response messages...
+    ///         # break;
+    ///     }
+    ///     
+    ///     client.disconnect().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Note
+    ///
+    /// This method only sends the message. You must call one of the receive methods
+    /// to get Claude's response. The client maintains the connection state between
+    /// calls, allowing for multi-turn conversations.
     pub async fn query(&mut self, prompt: PromptInput, session_id: Option<String>) -> Result<()> {
         let transport = self
             .transport
@@ -174,7 +374,61 @@ impl ClaudeSDKClient {
         }
     }
 
-    /// Receive messages from Claude as a stream.
+    /// Receive messages from Claude as an async stream.
+    ///
+    /// This method returns a stream that yields all messages from Claude, including
+    /// system messages, assistant responses, and result messages. The stream continues
+    /// indefinitely until the connection is closed or an error occurs.
+    ///
+    /// For most use cases, consider using [`receive_response`](Self::receive_response)
+    /// instead, which automatically stops after receiving a result message.
+    ///
+    /// # Returns
+    ///
+    /// Returns a stream of [`Message`] results. Each item in the stream represents
+    /// a message from Claude and may be:
+    /// - [`Message::System`]: Metadata and control information
+    /// - [`Message::Assistant`]: Claude's response content
+    /// - [`Message::Result`]: Query completion metadata
+    ///
+    /// # Errors
+    ///
+    /// - [`SdkError::Transport`]: Client is not connected
+    /// - Stream items may contain parsing or communication errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use claude_code_sdk::{ClaudeSDKClient, PromptInput, Message};
+    /// use tokio_stream::StreamExt;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> claude_code_sdk::Result<()> {
+    ///     let mut client = ClaudeSDKClient::new(None);
+    ///     client.connect(None).await?;
+    ///     
+    ///     client.query(PromptInput::from("Hello!"), None).await?;
+    ///     
+    ///     let messages = client.receive_messages().await?;
+    ///     tokio::pin!(messages);
+    ///     
+    ///     while let Some(message_result) = messages.next().await {
+    ///         match message_result? {
+    ///             Message::Assistant(msg) => {
+    ///                 println!("Claude: {:?}", msg.content);
+    ///             }
+    ///             Message::Result(_) => {
+    ///                 println!("Query completed");
+    ///                 break; // Manually break on result
+    ///             }
+    ///             _ => {}
+    ///         }
+    ///     }
+    ///     
+    ///     client.disconnect().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn receive_messages(&mut self) -> Result<impl Stream<Item = Result<Message>> + '_> {
         let transport = self
             .transport
@@ -186,6 +440,54 @@ impl ClaudeSDKClient {
     }
 
     /// Receive messages until a result message is encountered.
+    ///
+    /// This is a convenience method that wraps [`receive_messages`](Self::receive_messages)
+    /// and automatically terminates the stream after receiving a [`Message::Result`].
+    /// This is the most common pattern for processing Claude's responses to a single query.
+    ///
+    /// # Returns
+    ///
+    /// Returns a stream of [`Message`] results that automatically terminates after
+    /// yielding a [`Message::Result`]. The result message is included in the stream.
+    ///
+    /// # Errors
+    ///
+    /// - [`SdkError::Transport`]: Client is not connected
+    /// - Stream items may contain parsing or communication errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use claude_code_sdk::{ClaudeSDKClient, PromptInput, Message};
+    /// use tokio_stream::StreamExt;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> claude_code_sdk::Result<()> {
+    ///     let mut client = ClaudeSDKClient::new(None);
+    ///     client.connect(None).await?;
+    ///     
+    ///     client.query(PromptInput::from("Hello!"), None).await?;
+    ///     
+    ///     let responses = client.receive_response().await?;
+    ///     tokio::pin!(responses);
+    ///     
+    ///     while let Some(message) = responses.next().await {
+    ///         match message? {
+    ///             Message::Assistant(msg) => {
+    ///                 println!("Claude: {:?}", msg.content);
+    ///             }
+    ///             Message::Result(result) => {
+    ///                 println!("Completed in {}ms", result.duration_ms);
+    ///                 // Stream automatically ends here
+    ///             }
+    ///             _ => {}
+    ///         }
+    ///     }
+    ///     
+    ///     client.disconnect().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn receive_response(&mut self) -> Result<impl Stream<Item = Result<Message>> + '_> {
         let messages = self.receive_messages().await?;
         Ok(async_stream::stream! {
@@ -209,6 +511,43 @@ impl ClaudeSDKClient {
     }
 
     /// Send an interrupt signal to Claude.
+    ///
+    /// This method sends a control signal to interrupt Claude's current processing.
+    /// This can be useful to cancel long-running operations or stop Claude from
+    /// continuing with a response.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the interrupt signal was sent successfully.
+    ///
+    /// # Errors
+    ///
+    /// - [`SdkError::Transport`]: Client is not connected
+    /// - [`SdkError::Interrupt`]: Failed to send interrupt signal
+    /// - [`SdkError::ControlTimeout`]: Interrupt acknowledgment timed out
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use claude_code_sdk::ClaudeSDKClient;
+    /// use tokio::time::{sleep, Duration};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> claude_code_sdk::Result<()> {
+    ///     let mut client = ClaudeSDKClient::new(None);
+    ///     client.connect(None).await?;
+    ///     
+    ///     // Start a potentially long-running query
+    ///     client.query("Write a very long story".into(), None).await?;
+    ///     
+    ///     // Wait a bit, then interrupt
+    ///     sleep(Duration::from_secs(2)).await;
+    ///     client.interrupt().await?;
+    ///     
+    ///     client.disconnect().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn interrupt(&mut self) -> Result<()> {
         let transport = self
             .transport
@@ -217,7 +556,49 @@ impl ClaudeSDKClient {
         transport.interrupt().await
     }
 
-    /// Disconnect from the Claude CLI.
+    /// Disconnect from the Claude CLI and clean up resources.
+    ///
+    /// This method gracefully terminates the CLI process and cleans up all associated
+    /// resources. It should be called when you're done with the client to ensure
+    /// proper cleanup, although the [`Drop`] implementation provides best-effort
+    /// cleanup as a fallback.
+    ///
+    /// After calling this method, the client returns to the disconnected state and
+    /// [`connect`](Self::connect) must be called again before sending queries.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if disconnection was successful, or an error if cleanup failed.
+    /// Even if an error is returned, the client is considered disconnected.
+    ///
+    /// # Errors
+    ///
+    /// - [`SdkError::Process`]: Failed to terminate the CLI process gracefully
+    /// - [`SdkError::Transport`]: Error during resource cleanup
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use claude_code_sdk::ClaudeSDKClient;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> claude_code_sdk::Result<()> {
+    ///     let mut client = ClaudeSDKClient::new(None);
+    ///     client.connect(None).await?;
+    ///     
+    ///     // Use the client...
+    ///     
+    ///     // Always disconnect explicitly for guaranteed cleanup
+    ///     client.disconnect().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Note
+    ///
+    /// While the [`Drop`] implementation provides automatic cleanup, it cannot
+    /// guarantee completion if the program exits immediately. For guaranteed
+    /// resource cleanup, always call this method explicitly.
     pub async fn disconnect(&mut self) -> Result<()> {
         if let Some(mut transport) = self.transport.take() {
             transport.disconnect().await?;
@@ -225,24 +606,119 @@ impl ClaudeSDKClient {
         Ok(())
     }
 
-    /// Check if the client is currently connected.
+    /// Check if the client is currently connected to the CLI.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the client has an active connection to the Claude CLI,
+    /// `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use claude_code_sdk::ClaudeSDKClient;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> claude_code_sdk::Result<()> {
+    ///     let mut client = ClaudeSDKClient::new(None);
+    ///     assert!(!client.is_connected());
+    ///     
+    ///     client.connect(None).await?;
+    ///     assert!(client.is_connected());
+    ///     
+    ///     client.disconnect().await?;
+    ///     assert!(!client.is_connected());
+    ///     
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn is_connected(&self) -> bool {
         self.transport.is_some()
     }
 
     /// Get the current session ID.
+    ///
+    /// Returns the session ID that will be used for queries when no explicit
+    /// session ID is provided to [`query`](Self::query).
+    ///
+    /// # Returns
+    ///
+    /// Returns a string slice containing the current session ID.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use claude_code_sdk::ClaudeSDKClient;
+    ///
+    /// let client = ClaudeSDKClient::new(None);
+    /// assert_eq!(client.current_session_id(), "default");
+    /// ```
     pub fn current_session_id(&self) -> &str {
         &self.current_session_id
     }
 
     /// Set the current session ID for future queries.
-    /// This will be used as the default session ID if none is provided to query().
+    ///
+    /// This session ID will be used as the default for all subsequent calls to
+    /// [`query`](Self::query) when no explicit session ID is provided.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The new session ID to use. Accepts any type that can be
+    ///   converted to a `String`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use claude_code_sdk::ClaudeSDKClient;
+    ///
+    /// let mut client = ClaudeSDKClient::new(None);
+    /// assert_eq!(client.current_session_id(), "default");
+    ///
+    /// client.set_session_id("my-session");
+    /// assert_eq!(client.current_session_id(), "my-session");
+    ///
+    /// client.set_session_id(String::from("another-session"));
+    /// assert_eq!(client.current_session_id(), "another-session");
+    /// ```
     pub fn set_session_id<S: Into<String>>(&mut self, session_id: S) {
         self.current_session_id = session_id.into();
     }
 
-    /// Create a new session with a generated ID.
-    /// Returns the new session ID.
+    /// Create a new session with a generated unique ID.
+    ///
+    /// This method generates a new session ID based on the current timestamp and
+    /// sets it as the current session ID for the client. This is useful for
+    /// starting fresh conversations or organizing different interaction contexts.
+    ///
+    /// # Returns
+    ///
+    /// Returns the newly generated session ID as a `String`. The ID format is
+    /// `"session_{timestamp}"` where timestamp is milliseconds since Unix epoch.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use claude_code_sdk::ClaudeSDKClient;
+    ///
+    /// let mut client = ClaudeSDKClient::new(None);
+    /// assert_eq!(client.current_session_id(), "default");
+    ///
+    /// let new_id = client.new_session();
+    /// assert!(new_id.starts_with("session_"));
+    /// assert_eq!(client.current_session_id(), new_id);
+    ///
+    /// // Each call generates a unique ID
+    /// let another_id = client.new_session();
+    /// assert_ne!(new_id, another_id);
+    /// ```
+    ///
+    /// # Use Cases
+    ///
+    /// - Starting a new conversation context
+    /// - Organizing different types of interactions
+    /// - Debugging and logging with unique identifiers
+    /// - Implementing conversation history management
     pub fn new_session(&mut self) -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
         

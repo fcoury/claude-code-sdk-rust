@@ -119,16 +119,16 @@
     - Implement proper session management
     - _Requirements: 5.5_
 
-- [ ] 9. Create public API with ergonomic interfaces
+- [x] 9. Create public API with ergonomic interfaces
 
-  - [ ] 9.1 Implement top-level query function
+  - [x] 9.1 Implement top-level query function
 
     - Create query function accepting AsRef<str> for flexible string handling
     - Integrate with InternalClient for one-shot query processing
     - Return async stream of Message results
     - _Requirements: 4.1, 4.2, 11.1_
 
-  - [ ] 9.2 Set up module exports and documentation
+  - [x] 9.2 Set up module exports and documentation
     - Configure lib.rs with proper re-exports
     - Add comprehensive doc comments for all public APIs
     - Ensure consistent error handling across all public interfaces

@@ -673,7 +673,15 @@ impl SubprocessCliTransport {
                     // Check if we have any parsed objects waiting first
                     while buffer.has_parsed_objects() {
                         if let Some(value) = buffer.try_parse_and_clear()? {
-                            yield Ok(value);
+                            // Check if this is a control response and handle it separately
+                            if Self::is_control_response(&value) {
+                                if let Err(e) = Self::handle_control_response_with_pending(value, &self.pending_control_responses) {
+                                    yield Err(e);
+                                }
+                                // Don't yield control responses to the main message stream
+                            } else {
+                                yield Ok(value);
+                            }
                         } else {
                             break;
                         }
@@ -690,7 +698,15 @@ impl SubprocessCliTransport {
                                     if buffer.buffer_size() > 0 {
                                         // Try one final parse of remaining buffer content
                                         match buffer.try_parse_and_clear() {
-                                            Ok(Some(value)) => yield Ok(value),
+                                            Ok(Some(value)) => {
+                                                if Self::is_control_response(&value) {
+                                                    if let Err(e) = Self::handle_control_response_with_pending(value, &self.pending_control_responses) {
+                                                        yield Err(e);
+                                                    }
+                                                } else {
+                                                    yield Ok(value);
+                                                }
+                                            }
                                             Ok(None) => {
                                                 // Incomplete JSON at EOF - this might be an error
                                                 if buffer.buffer_size() > 0 {
@@ -712,7 +728,15 @@ impl SubprocessCliTransport {
                                     // Parse all available complete JSON objects
                                     loop {
                                         match buffer.try_parse_and_clear() {
-                                            Ok(Some(value)) => yield Ok(value),
+                                            Ok(Some(value)) => {
+                                                if Self::is_control_response(&value) {
+                                                    if let Err(e) = Self::handle_control_response_with_pending(value, &self.pending_control_responses) {
+                                                        yield Err(e);
+                                                    }
+                                                } else {
+                                                    yield Ok(value);
+                                                }
+                                            }
                                             Ok(None) => break, // No more complete objects
                                             Err(e) => {
                                                 yield Err(e);
@@ -814,23 +838,92 @@ impl SubprocessCliTransport {
     /// Send an interrupt control signal.
     pub async fn interrupt(&mut self) -> Result<()> {
         let request_id = self.request_counter.fetch_add(1, Ordering::SeqCst);
+        let request_id_str = request_id.to_string();
         
         let control_request = serde_json::json!({
             "type": "control",
-            "request_id": request_id.to_string(),
+            "request_id": request_id_str,
             "action": "interrupt"
         });
+
+        // Register the pending control request
+        {
+            let mut pending = self.pending_control_responses.lock().unwrap();
+            pending.insert(request_id_str.clone(), serde_json::Value::Null);
+        }
 
         if let Some(ref mut stdin) = self.stdin_stream {
             let request_str = serde_json::to_string(&control_request)?;
             stdin.write_all(request_str.as_bytes()).await?;
             stdin.write_all(b"\n").await?;
             stdin.flush().await?;
+        } else {
+            // Remove from pending if we can't send
+            let mut pending = self.pending_control_responses.lock().unwrap();
+            pending.remove(&request_id_str);
+            return Err(SdkError::transport("No stdin stream available"));
         }
 
-        // TODO: Wait for control response acknowledgment
-        // This would involve tracking the request_id and waiting for a matching response
+        // Wait for control response acknowledgment with timeout
+        self.wait_for_control_response(&request_id_str).await
+    }
+
+    /// Wait for a control response with the given request ID.
+    async fn wait_for_control_response(&self, request_id: &str) -> Result<()> {
+        let timeout_duration = std::time::Duration::from_secs(5);
+        let start_time = std::time::Instant::now();
         
+        loop {
+            // Check if we have a response
+            {
+                let mut pending = self.pending_control_responses.lock().unwrap();
+                if let Some(response) = pending.remove(request_id) {
+                    // We got a response - check if it indicates success
+                    if response.is_null() {
+                        // Still waiting
+                    } else {
+                        // Got actual response data
+                        return Ok(());
+                    }
+                }
+            }
+            
+            // Check timeout
+            if start_time.elapsed() > timeout_duration {
+                // Clean up pending request
+                let mut pending = self.pending_control_responses.lock().unwrap();
+                pending.remove(request_id);
+                return Err(SdkError::control_timeout(timeout_duration.as_millis() as u64));
+            }
+            
+            // Wait a bit before checking again
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Check if a JSON value is a control response message.
+    fn is_control_response(value: &serde_json::Value) -> bool {
+        value.get("type").and_then(|t| t.as_str()) == Some("control_response")
+            || (value.get("type").and_then(|t| t.as_str()) == Some("control")
+                && value.get("request_id").is_some())
+    }
+
+    /// Handle a control response message.
+    /// This should be called when a control response is received from the CLI.
+    fn handle_control_response_with_pending(
+        response: serde_json::Value,
+        pending_responses: &Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    ) -> Result<()> {
+        if let Some(request_id) = response.get("request_id").and_then(|id| id.as_str()) {
+            let mut pending = pending_responses.lock().unwrap();
+            if pending.contains_key(request_id) {
+                pending.insert(request_id.to_string(), response);
+                return Ok(());
+            }
+        }
+        
+        // Unknown or unexpected control response - log but don't error
+        eprintln!("Warning: Received unexpected control response: {:?}", response);
         Ok(())
     }
 }

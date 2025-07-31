@@ -11,7 +11,8 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let mut stream = query("Hello, Claude!", None).await;
+//!     let stream = query("Hello, Claude!", None).await;
+//!     tokio::pin!(stream);
 //!     
 //!     while let Some(message) = stream.next().await {
 //!         match message? {
@@ -43,10 +44,13 @@
 //!     
 //!     // Send a message and receive responses
 //!     client.query("Hello, Claude!".into(), None).await?;
-//!     let mut responses = client.receive_response().await?;
-//!     
-//!     while let Some(message) = responses.next().await {
-//!         // Handle messages...
+//!     {
+//!         let responses = client.receive_response().await?;
+//!         tokio::pin!(responses);
+//!         
+//!         while let Some(message) = responses.next().await {
+//!             // Handle messages...
+//!         }
 //!     }
 //!     
 //!     client.disconnect().await?;
@@ -63,10 +67,10 @@ pub mod types;
 // Re-export public API
 pub use client::{ClaudeSDKClient, InternalClient};
 pub use errors::{Result, SdkError};
+pub use transport::PromptInput;
 pub use types::*;
 
 use tokio_stream::Stream;
-use transport::PromptInput;
 
 /// Execute a one-shot query to Claude Code CLI.
 ///
@@ -93,7 +97,8 @@ use transport::PromptInput;
 ///
 /// #[tokio::main]
 /// async fn main() -> claude_code_sdk::Result<()> {
-///     let mut stream = query("What is Rust?", None).await;
+///     let stream = query("What is Rust?", None).await;
+///     tokio::pin!(stream);
 ///     
 ///     while let Some(message) = stream.next().await {
 ///         match message? {
@@ -116,7 +121,7 @@ pub async fn query<S: AsRef<str>>(
     let client = client::InternalClient::new();
     client
         .process_query(
-            PromptInput::Text(prompt.as_ref().to_string()),
+            transport::PromptInput::Text(prompt.as_ref().to_string()),
             options,
         )
         .await

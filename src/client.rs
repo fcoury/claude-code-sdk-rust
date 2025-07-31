@@ -93,6 +93,7 @@ impl Default for InternalClient {
 pub struct ClaudeSDKClient {
     options: ClaudeCodeOptions,
     transport: Option<SubprocessCliTransport>,
+    current_session_id: String,
 }
 
 impl ClaudeSDKClient {
@@ -101,6 +102,7 @@ impl ClaudeSDKClient {
         Self {
             options: options.unwrap_or_default(),
             transport: None,
+            current_session_id: "default".to_string(),
         }
     }
 
@@ -130,7 +132,7 @@ impl ClaudeSDKClient {
             .as_mut()
             .ok_or_else(|| SdkError::transport("Not connected"))?;
 
-        let session_id = session_id.unwrap_or_else(|| "default".to_string());
+        let session_id = session_id.unwrap_or_else(|| self.current_session_id.clone());
 
         match prompt {
             PromptInput::Text(text) => {
@@ -147,12 +149,27 @@ impl ClaudeSDKClient {
                     .send_request(vec![message], HashMap::new())
                     .await
             }
-            PromptInput::Stream(_stream) => {
-                // TODO: Implement stream handling for async iterables
-                // This would involve converting the stream items and sending them to transport
-                Err(SdkError::transport(
-                    "Stream-based prompts not yet implemented for interactive client",
-                ))
+            PromptInput::Stream(mut stream) => {
+                // Collect stream items and convert them to messages
+                let mut messages = Vec::new();
+                
+                while let Some(item) = stream.next().await {
+                    // Each stream item should be a JSON value representing a message
+                    // We'll wrap it in the expected format for the CLI
+                    let message = serde_json::json!({
+                        "type": "user",
+                        "message": item,
+                        "parent_tool_use_id": null,
+                        "session_id": session_id
+                    });
+                    messages.push(message);
+                }
+                
+                if messages.is_empty() {
+                    return Err(SdkError::transport("Empty stream provided"));
+                }
+                
+                transport.send_request(messages, HashMap::new()).await
             }
         }
     }
@@ -211,6 +228,32 @@ impl ClaudeSDKClient {
     /// Check if the client is currently connected.
     pub fn is_connected(&self) -> bool {
         self.transport.is_some()
+    }
+
+    /// Get the current session ID.
+    pub fn current_session_id(&self) -> &str {
+        &self.current_session_id
+    }
+
+    /// Set the current session ID for future queries.
+    /// This will be used as the default session ID if none is provided to query().
+    pub fn set_session_id<S: Into<String>>(&mut self, session_id: S) {
+        self.current_session_id = session_id.into();
+    }
+
+    /// Create a new session with a generated ID.
+    /// Returns the new session ID.
+    pub fn new_session(&mut self) -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        
+        let session_id = format!("session_{}", timestamp);
+        self.current_session_id = session_id.clone();
+        session_id
     }
 }
 

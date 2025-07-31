@@ -96,16 +96,16 @@
     - Ensure proper cleanup on both success and failure
     - _Requirements: 4.4, 4.5_
 
-- [ ] 8. Implement interactive ClaudeSDKClient
+- [x] 8. Implement interactive ClaudeSDKClient
 
-  - [ ] 8.1 Create client structure and connection management
+  - [x] 8.1 Create client structure and connection management
 
     - Define ClaudeSDKClient struct with transport ownership
     - Implement connect method with optional prompt handling
     - Add proper state management for connection lifecycle
     - _Requirements: 5.1, 5.2, 10.4_
 
-  - [ ] 8.2 Add message sending and receiving capabilities with stream integration
+  - [x] 8.2 Add message sending and receiving capabilities with stream integration
 
     - Implement query method for sending messages in interactive mode
     - Create receive_messages method returning async stream with proper flow control
@@ -113,7 +113,7 @@
     - Ensure stream cancellation and early termination work correctly
     - _Requirements: 5.3, 5.4, 7.3, 7.4, 7.5_
 
-  - [ ] 8.3 Implement control flow features
+  - [x] 8.3 Implement control flow features
     - Add interrupt method for sending control signals
     - Handle control request/response correlation
     - Implement proper session management

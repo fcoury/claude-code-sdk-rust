@@ -3,9 +3,11 @@
 //! This example demonstrates interactive usage with bidirectional communication.
 //! It shows how to maintain a persistent connection for multiple exchanges.
 
-use claude_code_sdk::{ClaudeSDKClient, ClaudeCodeOptions, PermissionMode, PromptInput, Message, ContentBlock};
-use tokio_stream::StreamExt;
+use claude_code_sdk::{
+    ClaudeCodeOptions, ClaudeSDKClient, ContentBlock, Message, PermissionMode, PromptInput,
+};
 use std::path::PathBuf;
+use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> claude_code_sdk::Result<()> {
@@ -39,7 +41,7 @@ async fn main() -> claude_code_sdk::Result<()> {
     {
         let response_stream = client.receive_response().await?;
         tokio::pin!(response_stream);
-        
+
         println!("📥 Receiving response...\n");
         while let Some(message) = response_stream.next().await {
             match message? {
@@ -51,7 +53,10 @@ async fn main() -> claude_code_sdk::Result<()> {
                                 println!("{}", text_block.text);
                             }
                             ContentBlock::ToolUse(tool_block) => {
-                                println!("🔧 Using tool: {} (id: {})", tool_block.name, tool_block.id);
+                                println!(
+                                    "🔧 Using tool: {} (id: {})",
+                                    tool_block.name, tool_block.id
+                                );
                             }
                             ContentBlock::ToolResult(result_block) => {
                                 println!("📋 Tool result: {:?}", result_block.content);
@@ -74,16 +79,20 @@ async fn main() -> claude_code_sdk::Result<()> {
 
     // Second exchange: Ask for optimization
     println!("📤 Sending follow-up message...");
-    client.query(
-        PromptInput::from("Great! Now can you make it more efficient and add error handling for edge cases?"), 
-        None
-    ).await?;
+    client
+        .query(
+            PromptInput::from(
+                "Great! Now can you make it more efficient and add error handling for edge cases?",
+            ),
+            None,
+        )
+        .await?;
 
     // Receive and process follow-up response
     {
         let response_stream = client.receive_response().await?;
         tokio::pin!(response_stream);
-        
+
         println!("📥 Receiving follow-up response...\n");
         while let Some(message) = response_stream.next().await {
             match message? {
@@ -95,7 +104,10 @@ async fn main() -> claude_code_sdk::Result<()> {
                                 println!("{}", text_block.text);
                             }
                             ContentBlock::ToolUse(tool_block) => {
-                                println!("🔧 Using tool: {} (id: {})", tool_block.name, tool_block.id);
+                                println!(
+                                    "🔧 Using tool: {} (id: {})",
+                                    tool_block.name, tool_block.id
+                                );
                             }
                             ContentBlock::ToolResult(result_block) => {
                                 println!("📋 Tool result: {:?}", result_block.content);
@@ -129,7 +141,7 @@ async fn main() -> claude_code_sdk::Result<()> {
     {
         let response_stream = client.receive_response().await?;
         tokio::pin!(response_stream);
-        
+
         println!("📥 Receiving third response...\n");
         while let Some(message) = response_stream.next().await {
             match message? {
@@ -141,7 +153,10 @@ async fn main() -> claude_code_sdk::Result<()> {
                                 println!("{}", text_block.text);
                             }
                             ContentBlock::ToolUse(tool_block) => {
-                                println!("🔧 Using tool: {} (id: {})", tool_block.name, tool_block.id);
+                                println!(
+                                    "🔧 Using tool: {} (id: {})",
+                                    tool_block.name, tool_block.id
+                                );
                             }
                             ContentBlock::ToolResult(result_block) => {
                                 println!("📋 Tool result: {:?}", result_block.content);

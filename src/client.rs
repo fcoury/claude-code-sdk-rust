@@ -275,7 +275,7 @@ impl ClaudeSDKClient {
     /// Send a query message to Claude in the interactive session.
     ///
     /// This method sends a message to Claude and returns immediately. To receive Claude's
-    /// response, use [`receive_messages`](Self::receive_messages) or 
+    /// response, use [`receive_messages`](Self::receive_messages) or
     /// [`receive_response`](Self::receive_response) after calling this method.
     ///
     /// # Arguments
@@ -349,14 +349,12 @@ impl ClaudeSDKClient {
                     "parent_tool_use_id": null,
                     "session_id": session_id
                 });
-                transport
-                    .send_request(vec![message], HashMap::new())
-                    .await
+                transport.send_request(vec![message], HashMap::new()).await
             }
             PromptInput::Stream(mut stream) => {
                 // Collect stream items and convert them to messages
                 let mut messages = Vec::new();
-                
+
                 while let Some(item) = stream.next().await {
                     // Each stream item should be a JSON value representing a message
                     // We'll wrap it in the expected format for the CLI
@@ -368,11 +366,11 @@ impl ClaudeSDKClient {
                     });
                     messages.push(message);
                 }
-                
+
                 if messages.is_empty() {
                     return Err(SdkError::transport("Empty stream provided"));
                 }
-                
+
                 transport.send_request(messages, HashMap::new()).await
             }
         }
@@ -732,13 +730,13 @@ impl ClaudeSDKClient {
     /// - Implementing conversation history management
     pub fn new_session(&mut self) -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        
-        let session_id = format!("session_{}", timestamp);
+
+        let session_id = format!("session_{timestamp}");
         self.current_session_id = session_id.clone();
         session_id
     }

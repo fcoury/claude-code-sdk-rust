@@ -1,6 +1,6 @@
+use claude_code_sdk::errors::SdkError;
 use claude_code_sdk::message_parser::parse_message;
 use claude_code_sdk::types::*;
-use claude_code_sdk::errors::SdkError;
 use serde_json::json;
 
 #[test]
@@ -11,16 +11,14 @@ fn test_parse_user_message_with_text_content() {
     });
 
     let result = parse_message(json_data).unwrap();
-    
+
     match result {
-        Message::User(user_msg) => {
-            match user_msg.content {
-                MessageContent::Text(text) => {
-                    assert_eq!(text, "Hello, Claude!");
-                }
-                _ => panic!("Expected text content"),
+        Message::User(user_msg) => match user_msg.content {
+            MessageContent::Text(text) => {
+                assert_eq!(text, "Hello, Claude!");
             }
-        }
+            _ => panic!("Expected text content"),
+        },
         _ => panic!("Expected user message"),
     }
 }
@@ -38,22 +36,20 @@ fn test_parse_user_message_with_block_content() {
     });
 
     let result = parse_message(json_data).unwrap();
-    
+
     match result {
-        Message::User(user_msg) => {
-            match user_msg.content {
-                MessageContent::Blocks(blocks) => {
-                    assert_eq!(blocks.len(), 1);
-                    match &blocks[0] {
-                        ContentBlock::Text(text_block) => {
-                            assert_eq!(text_block.text, "Hello, Claude!");
-                        }
-                        _ => panic!("Expected text block"),
+        Message::User(user_msg) => match user_msg.content {
+            MessageContent::Blocks(blocks) => {
+                assert_eq!(blocks.len(), 1);
+                match &blocks[0] {
+                    ContentBlock::Text(text_block) => {
+                        assert_eq!(text_block.text, "Hello, Claude!");
                     }
+                    _ => panic!("Expected text block"),
                 }
-                _ => panic!("Expected block content"),
             }
-        }
+            _ => panic!("Expected block content"),
+        },
         _ => panic!("Expected user message"),
     }
 }
@@ -79,11 +75,11 @@ fn test_parse_assistant_message() {
     });
 
     let result = parse_message(json_data).unwrap();
-    
+
     match result {
         Message::Assistant(assistant_msg) => {
             assert_eq!(assistant_msg.content.len(), 2);
-            
+
             // Check text block
             match &assistant_msg.content[0] {
                 ContentBlock::Text(text_block) => {
@@ -91,7 +87,7 @@ fn test_parse_assistant_message() {
                 }
                 _ => panic!("Expected text block"),
             }
-            
+
             // Check tool use block
             match &assistant_msg.content[1] {
                 ContentBlock::ToolUse(tool_block) => {
@@ -118,12 +114,15 @@ fn test_parse_system_message() {
     });
 
     let result = parse_message(json_data).unwrap();
-    
+
     match result {
         Message::System(system_msg) => {
             assert_eq!(system_msg.subtype, "session_start");
             assert_eq!(system_msg.data.get("session_id").unwrap(), "session_123");
-            assert_eq!(system_msg.data.get("timestamp").unwrap(), "2024-01-01T00:00:00Z");
+            assert_eq!(
+                system_msg.data.get("timestamp").unwrap(),
+                "2024-01-01T00:00:00Z"
+            );
         }
         _ => panic!("Expected system message"),
     }
@@ -148,18 +147,21 @@ fn test_parse_result_message() {
     });
 
     let result = parse_message(json_data).unwrap();
-    
+
     match result {
         Message::Result(result_msg) => {
             assert_eq!(result_msg.subtype, "query_complete");
             assert_eq!(result_msg.duration_ms, 1500);
             assert_eq!(result_msg.duration_api_ms, 1200);
-            assert_eq!(result_msg.is_error, false);
+            assert!(!result_msg.is_error);
             assert_eq!(result_msg.num_turns, 3);
             assert_eq!(result_msg.session_id, "session_123");
             assert_eq!(result_msg.total_cost_usd, Some(0.05));
             assert!(result_msg.usage.is_some());
-            assert_eq!(result_msg.result, Some("Task completed successfully".to_string()));
+            assert_eq!(
+                result_msg.result,
+                Some("Task completed successfully".to_string())
+            );
         }
         _ => panic!("Expected result message"),
     }
@@ -180,28 +182,24 @@ fn test_parse_tool_result_block_with_text_content() {
     });
 
     let result = parse_message(json_data).unwrap();
-    
+
     match result {
-        Message::User(user_msg) => {
-            match user_msg.content {
-                MessageContent::Blocks(blocks) => {
-                    match &blocks[0] {
-                        ContentBlock::ToolResult(tool_result) => {
-                            assert_eq!(tool_result.tool_use_id, "tool_123");
-                            assert_eq!(tool_result.is_error, Some(false));
-                            match &tool_result.content {
-                                Some(ToolResultContent::Text(text)) => {
-                                    assert_eq!(text, "The result is 4");
-                                }
-                                _ => panic!("Expected text content"),
-                            }
+        Message::User(user_msg) => match user_msg.content {
+            MessageContent::Blocks(blocks) => match &blocks[0] {
+                ContentBlock::ToolResult(tool_result) => {
+                    assert_eq!(tool_result.tool_use_id, "tool_123");
+                    assert_eq!(tool_result.is_error, Some(false));
+                    match &tool_result.content {
+                        Some(ToolResultContent::Text(text)) => {
+                            assert_eq!(text, "The result is 4");
                         }
-                        _ => panic!("Expected tool result block"),
+                        _ => panic!("Expected text content"),
                     }
                 }
-                _ => panic!("Expected block content"),
-            }
-        }
+                _ => panic!("Expected tool result block"),
+            },
+            _ => panic!("Expected block content"),
+        },
         _ => panic!("Expected user message"),
     }
 }
@@ -230,31 +228,27 @@ fn test_parse_tool_result_block_with_structured_content() {
     });
 
     let result = parse_message(json_data).unwrap();
-    
+
     match result {
-        Message::User(user_msg) => {
-            match user_msg.content {
-                MessageContent::Blocks(blocks) => {
-                    match &blocks[0] {
-                        ContentBlock::ToolResult(tool_result) => {
-                            assert_eq!(tool_result.tool_use_id, "tool_123");
-                            match &tool_result.content {
-                                Some(ToolResultContent::Structured(structured)) => {
-                                    assert_eq!(structured.len(), 2);
-                                    assert_eq!(structured[0].get("type").unwrap(), "file");
-                                    assert_eq!(structured[0].get("name").unwrap(), "test.txt");
-                                    assert_eq!(structured[1].get("type").unwrap(), "directory");
-                                    assert_eq!(structured[1].get("name").unwrap(), "src");
-                                }
-                                _ => panic!("Expected structured content"),
-                            }
+        Message::User(user_msg) => match user_msg.content {
+            MessageContent::Blocks(blocks) => match &blocks[0] {
+                ContentBlock::ToolResult(tool_result) => {
+                    assert_eq!(tool_result.tool_use_id, "tool_123");
+                    match &tool_result.content {
+                        Some(ToolResultContent::Structured(structured)) => {
+                            assert_eq!(structured.len(), 2);
+                            assert_eq!(structured[0].get("type").unwrap(), "file");
+                            assert_eq!(structured[0].get("name").unwrap(), "test.txt");
+                            assert_eq!(structured[1].get("type").unwrap(), "directory");
+                            assert_eq!(structured[1].get("name").unwrap(), "src");
                         }
-                        _ => panic!("Expected tool result block"),
+                        _ => panic!("Expected structured content"),
                     }
                 }
-                _ => panic!("Expected block content"),
-            }
-        }
+                _ => panic!("Expected tool result block"),
+            },
+            _ => panic!("Expected block content"),
+        },
         _ => panic!("Expected user message"),
     }
 }
@@ -266,7 +260,7 @@ fn test_parse_message_missing_type_field() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -284,7 +278,7 @@ fn test_parse_message_unknown_type() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -299,7 +293,7 @@ fn test_parse_message_not_json_object() {
     let json_data = json!("not an object");
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -316,7 +310,7 @@ fn test_parse_user_message_missing_content() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -334,7 +328,7 @@ fn test_parse_assistant_message_content_not_array() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -352,7 +346,7 @@ fn test_parse_system_message_missing_subtype() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -371,7 +365,7 @@ fn test_parse_result_message_missing_required_fields() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -394,7 +388,7 @@ fn test_parse_content_block_unknown_type() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -417,7 +411,7 @@ fn test_parse_text_block_missing_text_field() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -441,7 +435,7 @@ fn test_parse_tool_use_block_missing_fields() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -465,7 +459,7 @@ fn test_parse_tool_result_block_missing_tool_use_id() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -491,7 +485,7 @@ fn test_parse_tool_result_content_invalid_structured() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -509,7 +503,7 @@ fn test_parse_message_content_invalid_type() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -529,7 +523,7 @@ fn test_parse_content_block_not_object() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -553,7 +547,7 @@ fn test_parse_tool_result_content_invalid_type() {
     });
 
     let result = parse_message(json_data);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         SdkError::MessageParse { message, .. } => {
@@ -572,7 +566,7 @@ fn test_parse_system_message_with_empty_data() {
     });
 
     let result = parse_message(json_data).unwrap();
-    
+
     match result {
         Message::System(system_msg) => {
             assert_eq!(system_msg.subtype, "session_start");
@@ -596,13 +590,13 @@ fn test_parse_result_message_with_optional_fields_none() {
     });
 
     let result = parse_message(json_data).unwrap();
-    
+
     match result {
         Message::Result(result_msg) => {
             assert_eq!(result_msg.subtype, "query_complete");
             assert_eq!(result_msg.duration_ms, 1500);
             assert_eq!(result_msg.duration_api_ms, 1200);
-            assert_eq!(result_msg.is_error, false);
+            assert!(!result_msg.is_error);
             assert_eq!(result_msg.num_turns, 3);
             assert_eq!(result_msg.session_id, "session_123");
             assert_eq!(result_msg.total_cost_usd, None);
@@ -628,18 +622,16 @@ fn test_parse_tool_use_block_with_empty_input() {
     });
 
     let result = parse_message(json_data).unwrap();
-    
+
     match result {
-        Message::Assistant(assistant_msg) => {
-            match &assistant_msg.content[0] {
-                ContentBlock::ToolUse(tool_block) => {
-                    assert_eq!(tool_block.id, "tool_123");
-                    assert_eq!(tool_block.name, "calculator");
-                    assert!(tool_block.input.is_empty());
-                }
-                _ => panic!("Expected tool use block"),
+        Message::Assistant(assistant_msg) => match &assistant_msg.content[0] {
+            ContentBlock::ToolUse(tool_block) => {
+                assert_eq!(tool_block.id, "tool_123");
+                assert_eq!(tool_block.name, "calculator");
+                assert!(tool_block.input.is_empty());
             }
-        }
+            _ => panic!("Expected tool use block"),
+        },
         _ => panic!("Expected assistant message"),
     }
 }
@@ -658,23 +650,19 @@ fn test_parse_tool_result_block_with_optional_fields_none() {
     });
 
     let result = parse_message(json_data).unwrap();
-    
+
     match result {
-        Message::User(user_msg) => {
-            match user_msg.content {
-                MessageContent::Blocks(blocks) => {
-                    match &blocks[0] {
-                        ContentBlock::ToolResult(tool_result) => {
-                            assert_eq!(tool_result.tool_use_id, "tool_123");
-                            assert_eq!(tool_result.content, None);
-                            assert_eq!(tool_result.is_error, None);
-                        }
-                        _ => panic!("Expected tool result block"),
-                    }
+        Message::User(user_msg) => match user_msg.content {
+            MessageContent::Blocks(blocks) => match &blocks[0] {
+                ContentBlock::ToolResult(tool_result) => {
+                    assert_eq!(tool_result.tool_use_id, "tool_123");
+                    assert_eq!(tool_result.content, None);
+                    assert_eq!(tool_result.is_error, None);
                 }
-                _ => panic!("Expected block content"),
-            }
-        }
+                _ => panic!("Expected tool result block"),
+            },
+            _ => panic!("Expected block content"),
+        },
         _ => panic!("Expected user message"),
     }
 }

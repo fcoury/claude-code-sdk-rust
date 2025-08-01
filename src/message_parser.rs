@@ -10,9 +10,9 @@ use std::collections::HashMap;
 
 /// Parse a JSON value into a typed Message.
 pub fn parse_message(data: serde_json::Value) -> Result<Message> {
-    let obj = data.as_object().ok_or_else(|| {
-        SdkError::message_parse("Expected JSON object", data.clone())
-    })?;
+    let obj = data
+        .as_object()
+        .ok_or_else(|| SdkError::message_parse("Expected JSON object", data.clone()))?;
 
     let message_type = obj
         .get("type")
@@ -25,7 +25,7 @@ pub fn parse_message(data: serde_json::Value) -> Result<Message> {
         "system" => parse_system_message(obj, &data),
         "result" => parse_result_message(obj, &data),
         _ => Err(SdkError::message_parse(
-            format!("Unknown message type: {}", message_type),
+            format!("Unknown message type: {message_type}"),
             data,
         )),
     }
@@ -58,9 +58,7 @@ fn parse_assistant_message(
 
     let content_blocks = content
         .as_array()
-        .ok_or_else(|| {
-            SdkError::message_parse("Assistant content must be an array", data.clone())
-        })?
+        .ok_or_else(|| SdkError::message_parse("Assistant content must be an array", data.clone()))?
         .iter()
         .map(|block| parse_content_block(block, data))
         .collect::<Result<Vec<_>>>()?;
@@ -143,7 +141,10 @@ fn parse_result_message(
             .collect::<HashMap<String, serde_json::Value>>()
     });
 
-    let result = obj.get("result").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let result = obj
+        .get("result")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     Ok(Message::Result(ResultMessage {
         subtype,
@@ -184,21 +185,20 @@ fn parse_content_block(
     block: &serde_json::Value,
     data: &serde_json::Value,
 ) -> Result<ContentBlock> {
-    let obj = block.as_object().ok_or_else(|| {
-        SdkError::message_parse("Content block must be an object", data.clone())
-    })?;
+    let obj = block
+        .as_object()
+        .ok_or_else(|| SdkError::message_parse("Content block must be an object", data.clone()))?;
 
-    let block_type = obj
-        .get("type")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| SdkError::message_parse("Missing 'type' field in content block", data.clone()))?;
+    let block_type = obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+        SdkError::message_parse("Missing 'type' field in content block", data.clone())
+    })?;
 
     match block_type {
         "text" => parse_text_block(obj, data),
         "tool_use" => parse_tool_use_block(obj, data),
         "tool_result" => parse_tool_result_block(obj, data),
         _ => Err(SdkError::message_parse(
-            format!("Unknown content block type: {}", block_type),
+            format!("Unknown content block type: {block_type}"),
             data.clone(),
         )),
     }
@@ -226,13 +226,17 @@ fn parse_tool_use_block(
     let id = obj
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| SdkError::message_parse("Missing 'id' field in tool_use block", data.clone()))?
+        .ok_or_else(|| {
+            SdkError::message_parse("Missing 'id' field in tool_use block", data.clone())
+        })?
         .to_string();
 
     let name = obj
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| SdkError::message_parse("Missing 'name' field in tool_use block", data.clone()))?
+        .ok_or_else(|| {
+            SdkError::message_parse("Missing 'name' field in tool_use block", data.clone())
+        })?
         .to_string();
 
     let input = obj
@@ -257,11 +261,17 @@ fn parse_tool_result_block(
         .get("tool_use_id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            SdkError::message_parse("Missing 'tool_use_id' field in tool_result block", data.clone())
+            SdkError::message_parse(
+                "Missing 'tool_use_id' field in tool_result block",
+                data.clone(),
+            )
         })?
         .to_string();
 
-    let content = obj.get("content").map(|v| parse_tool_result_content(v, data)).transpose()?;
+    let content = obj
+        .get("content")
+        .map(|v| parse_tool_result_content(v, data))
+        .transpose()?;
 
     let is_error = obj.get("is_error").and_then(|v| v.as_bool());
 

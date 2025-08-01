@@ -3,7 +3,7 @@ name = "claude-code-sdk"
 version = "0.1.0"
 edition = "2021"
 authors = ["Anthropic <support@anthropic.com>"]
-description = "Rust SDK for interacting with Claude Code CLI"
+description = "High-performance Rust SDK for interacting with Claude Code CLI - supports both one-shot queries and interactive sessions"
 license = "MIT"
 repository = "https://github.com/anthropics/claude-code-sdk-rust"
 homepage = "https://github.com/anthropics/claude-code-sdk-rust"
@@ -12,6 +12,26 @@ keywords = ["claude", "ai", "anthropic", "cli", "sdk"]
 categories = ["api-bindings", "command-line-utilities"]
 readme = "README.md"
 rust-version = "1.70"
+exclude = [
+    "target/",
+    ".git/",
+    ".gitignore",
+    ".kiro/",
+    "*.log",
+    "*.tmp",
+    ".DS_Store",
+    "Thumbs.db"
+]
+include = [
+    "src/**/*",
+    "examples/**/*",
+    "tests/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
+]
 
 [dependencies]
 # Async runtime and utilities

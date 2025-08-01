@@ -168,28 +168,40 @@ pub mod types;
 // These are the main types and functions users should interact with
 
 /// Client for interactive bidirectional conversations with Claude.
-/// 
+///
 /// See [`ClaudeSDKClient`] for detailed documentation.
 pub use client::ClaudeSDKClient;
 
 /// Result type alias for all SDK operations.
-/// 
+///
 /// This is equivalent to `std::result::Result<T, SdkError>`.
 pub use errors::{Result, SdkError};
 
 /// Input type for prompts, supporting both text and async streams.
-/// 
+///
 /// See [`PromptInput`] for detailed documentation.
 pub use transport::PromptInput;
 
 // Message and configuration types
 pub use types::{
-    // Core message types
-    Message, UserMessage, AssistantMessage, SystemMessage, ResultMessage,
-    // Content types
-    MessageContent, ContentBlock, TextBlock, ToolUseBlock, ToolResultBlock, ToolResultContent,
+    AssistantMessage,
     // Configuration types
-    ClaudeCodeOptions, ClaudeCodeOptionsBuilder, PermissionMode, McpServerConfig,
+    ClaudeCodeOptions,
+    ClaudeCodeOptionsBuilder,
+    ContentBlock,
+    McpServerConfig,
+    // Core message types
+    Message,
+    // Content types
+    MessageContent,
+    PermissionMode,
+    ResultMessage,
+    SystemMessage,
+    TextBlock,
+    ToolResultBlock,
+    ToolResultContent,
+    ToolUseBlock,
+    UserMessage,
 };
 
 // Internal client is not re-exported as it's only used by the query function

@@ -3,7 +3,7 @@
 //! This example demonstrates basic usage of the SDK for one-shot queries.
 //! It shows how to send a simple prompt to Claude and process the response stream.
 
-use claude_code_sdk::{query, ClaudeCodeOptions, Message, ContentBlock};
+use claude_code_sdk::{query, ClaudeCodeOptions, ContentBlock, Message};
 use tokio_stream::StreamExt;
 
 #[tokio::main]
@@ -44,7 +44,7 @@ async fn main() -> claude_code_sdk::Result<()> {
                         ContentBlock::ToolResult(result_block) => {
                             println!("📋 Tool result for: {}", result_block.tool_use_id);
                             if let Some(content) = &result_block.content {
-                                println!("   Content: {:?}", content);
+                                println!("   Content: {content:?}");
                             }
                         }
                     }
@@ -58,7 +58,7 @@ async fn main() -> claude_code_sdk::Result<()> {
                 println!("   Turns: {}", result.num_turns);
                 println!("   Session ID: {}", result.session_id);
                 if let Some(cost) = result.total_cost_usd {
-                    println!("   Cost: ${:.4}", cost);
+                    println!("   Cost: ${cost:.4}");
                 }
                 if result.is_error {
                     println!("   ⚠️  Query completed with errors");

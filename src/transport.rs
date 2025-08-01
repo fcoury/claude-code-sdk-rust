@@ -5,6 +5,7 @@
 
 use crate::errors::{Result, SdkError};
 use crate::types::ClaudeCodeOptions;
+use async_stream;
 use serde_json;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,7 +15,6 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio_stream::Stream;
-use async_stream;
 
 /// Input for prompts, can be text or an async stream.
 pub enum PromptInput {
@@ -91,7 +91,7 @@ impl SubprocessCliTransport {
     }
 
     /// Find the Claude Code CLI in the system PATH.
-    /// 
+    ///
     /// This function searches for the Claude CLI in standard installation paths
     /// and provides helpful error messages for common issues.
     pub fn find_cli() -> Result<String> {
@@ -115,7 +115,7 @@ impl SubprocessCliTransport {
         for candidate in &cli_candidates {
             // Expand tilde and environment variables
             let expanded_path = Self::expand_path(candidate);
-            
+
             if let Ok(path) = which::which(&expanded_path) {
                 return Ok(path.to_string_lossy().to_string());
             }
@@ -138,19 +138,19 @@ impl SubprocessCliTransport {
                 return path.replacen('~', &home, 1);
             }
         }
-        
+
         // Handle Windows environment variables
         if path.contains("%USERNAME%") {
             if let Ok(username) = std::env::var("USERNAME") {
                 return path.replace("%USERNAME%", &username);
             }
         }
-        
+
         path.to_string()
     }
 
     /// Build the command arguments for the CLI.
-    /// 
+    ///
     /// Converts ClaudeCodeOptions to CLI arguments, handling both streaming
     /// and string mode differences, and supporting all configuration options.
     pub fn build_command(&self) -> Vec<String> {
@@ -205,7 +205,11 @@ impl SubprocessCliTransport {
         if !self.options.mcp_servers.is_empty() {
             for (name, config) in &self.options.mcp_servers {
                 args.push("--mcp-server".to_string());
-                args.push(format!("{}={}", name, Self::serialize_mcp_server_config(config)));
+                args.push(format!(
+                    "{}={}",
+                    name,
+                    Self::serialize_mcp_server_config(config)
+                ));
             }
         }
 
@@ -259,65 +263,63 @@ impl SubprocessCliTransport {
         match config {
             crate::types::McpServerConfig::Stdio { command, args, env } => {
                 let mut parts = vec![format!("stdio:{}", command)];
-                
+
                 if let Some(args) = args {
                     if !args.is_empty() {
                         parts.push(format!("args={}", args.join(",")));
                     }
                 }
-                
+
                 if let Some(env) = env {
                     if !env.is_empty() {
-                        let env_pairs: Vec<String> = env
-                            .iter()
-                            .map(|(k, v)| format!("{}={}", k, v))
-                            .collect();
+                        let env_pairs: Vec<String> =
+                            env.iter().map(|(k, v)| format!("{k}={v}")).collect();
                         parts.push(format!("env={}", env_pairs.join(",")));
                     }
                 }
-                
+
                 parts.join(";")
             }
             crate::types::McpServerConfig::Sse { url, headers } => {
-                let mut parts = vec![format!("sse:{}", url)];
-                
+                let mut parts = vec![format!("sse:{url}")];
+
                 if let Some(headers) = headers {
                     if !headers.is_empty() {
                         let header_pairs: Vec<String> = headers
                             .iter()
-                            .map(|(k, v)| format!("{}={}", k, v))
+                            .map(|(k, v)| format!("{k}={v}"))
                             .collect();
                         parts.push(format!("headers={}", header_pairs.join(",")));
                     }
                 }
-                
+
                 parts.join(";")
             }
             crate::types::McpServerConfig::Http { url, headers } => {
-                let mut parts = vec![format!("http:{}", url)];
-                
+                let mut parts = vec![format!("http:{url}")];
+
                 if let Some(headers) = headers {
                     if !headers.is_empty() {
                         let header_pairs: Vec<String> = headers
                             .iter()
-                            .map(|(k, v)| format!("{}={}", k, v))
+                            .map(|(k, v)| format!("{k}={v}"))
                             .collect();
                         parts.push(format!("headers={}", header_pairs.join(",")));
                     }
                 }
-                
+
                 parts.join(";")
             }
         }
     }
 
     /// Connect to the CLI process with comprehensive error handling.
-    /// 
+    ///
     /// This method handles process startup, stream setup, and initial prompt sending
     /// with detailed error reporting for common failure scenarios.
     pub async fn connect(&mut self) -> Result<()> {
         let args = self.build_command();
-        
+
         // Validate CLI path exists and is executable
         if !std::path::Path::new(&self.cli_path).exists() {
             return Err(SdkError::transport(format!(
@@ -341,7 +343,8 @@ impl SubprocessCliTransport {
             }
             if !cwd.is_dir() {
                 return Err(SdkError::invalid_working_directory(format!(
-                    "{} is not a directory", cwd.to_string_lossy()
+                    "{} is not a directory",
+                    cwd.to_string_lossy()
                 )));
             }
             command.current_dir(cwd);
@@ -369,7 +372,7 @@ impl SubprocessCliTransport {
         // Verify the process started successfully by checking if it's still running
         // after a brief moment (some processes fail immediately)
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        
+
         match child.try_wait() {
             Ok(Some(status)) => {
                 // Process exited immediately - this is likely an error
@@ -378,14 +381,14 @@ impl SubprocessCliTransport {
                     use tokio::io::AsyncReadExt;
                     let _ = stderr.read_to_string(&mut stderr_content).await;
                 }
-                
+
                 return Err(SdkError::process(
                     status.code(),
                     if stderr_content.is_empty() {
-                        format!("CLI process exited immediately with status: {:?}", status)
+                        format!("CLI process exited immediately with status: {status:?}")
                     } else {
                         stderr_content
-                    }
+                    },
                 ));
             }
             Ok(None) => {
@@ -398,15 +401,21 @@ impl SubprocessCliTransport {
 
         // Set up streams with error handling
         let stdin = child.stdin.take().ok_or_else(|| {
-            SdkError::transport("Failed to get stdin handle from child process - this should not happen")
+            SdkError::transport(
+                "Failed to get stdin handle from child process - this should not happen",
+            )
         })?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
-            SdkError::transport("Failed to get stdout handle from child process - this should not happen")
+            SdkError::transport(
+                "Failed to get stdout handle from child process - this should not happen",
+            )
         })?;
 
         let stderr = child.stderr.take().ok_or_else(|| {
-            SdkError::transport("Failed to get stderr handle from child process - this should not happen")
+            SdkError::transport(
+                "Failed to get stderr handle from child process - this should not happen",
+            )
         })?;
 
         self.stdin_stream = Some(stdin);
@@ -421,15 +430,15 @@ impl SubprocessCliTransport {
                 // If sending the prompt fails, clean up and return error
                 let _ = self.disconnect().await;
                 return Err(SdkError::stream_with_context(
-                    format!("Failed to send initial prompt: {}", e),
-                    "The CLI process may not be ready to receive input"
+                    format!("Failed to send initial prompt: {e}"),
+                    "The CLI process may not be ready to receive input",
                 ));
             }
-            
+
             if self.close_stdin_after_prompt {
                 if let Some(mut stdin) = self.stdin_stream.take() {
                     if let Err(e) = stdin.shutdown().await {
-                        eprintln!("Warning: Failed to close stdin after prompt: {}", e);
+                        eprintln!("Warning: Failed to close stdin after prompt: {e}");
                     }
                 }
             }
@@ -449,7 +458,7 @@ impl SubprocessCliTransport {
     }
 
     /// Disconnect from the CLI process with graceful shutdown and timeout handling.
-    /// 
+    ///
     /// This method implements a multi-stage shutdown process:
     /// 1. Close stdin to signal the process to exit
     /// 2. Wait for graceful exit with timeout
@@ -465,10 +474,8 @@ impl SubprocessCliTransport {
         // Handle process termination with multiple timeout stages
         if let Some(mut process) = self.process.take() {
             // Stage 1: Wait for graceful exit (5 seconds)
-            let graceful_exit = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                process.wait(),
-            ).await;
+            let graceful_exit =
+                tokio::time::timeout(std::time::Duration::from_secs(5), process.wait()).await;
 
             match graceful_exit {
                 Ok(Ok(status)) => {
@@ -482,8 +489,8 @@ impl SubprocessCliTransport {
                     // Error waiting for process
                     let stderr = self.collect_stderr_final().await;
                     return Err(SdkError::stream_with_context(
-                        format!("Error waiting for process: {}", e),
-                        format!("stderr: {}", stderr)
+                        format!("Error waiting for process: {e}"),
+                        format!("stderr: {stderr}"),
                     ));
                 }
                 Err(_) => {
@@ -492,14 +499,13 @@ impl SubprocessCliTransport {
                     {
                         // Send SIGTERM
                         if let Err(e) = self.send_signal(&mut process, libc::SIGTERM).await {
-                            eprintln!("Warning: Failed to send SIGTERM: {}", e);
+                            eprintln!("Warning: Failed to send SIGTERM: {e}");
                         }
 
                         // Wait for SIGTERM to take effect (3 seconds)
-                        let sigterm_exit = tokio::time::timeout(
-                            std::time::Duration::from_secs(3),
-                            process.wait(),
-                        ).await;
+                        let sigterm_exit =
+                            tokio::time::timeout(std::time::Duration::from_secs(3), process.wait())
+                                .await;
 
                         match sigterm_exit {
                             Ok(Ok(status)) => {
@@ -508,24 +514,25 @@ impl SubprocessCliTransport {
                                     // Process was terminated by signal, which is expected
                                     let stderr = self.collect_stderr_final().await;
                                     if !stderr.is_empty() {
-                                        eprintln!("Process stderr: {}", stderr);
+                                        eprintln!("Process stderr: {stderr}");
                                     }
                                 }
                             }
                             Ok(Err(e)) => {
-                                eprintln!("Error waiting for process after SIGTERM: {}", e);
+                                eprintln!("Error waiting for process after SIGTERM: {e}");
                             }
                             Err(_) => {
                                 // SIGTERM timeout - force kill with SIGKILL
                                 if let Err(e) = process.kill().await {
-                                    eprintln!("Warning: Failed to kill process: {}", e);
+                                    eprintln!("Warning: Failed to kill process: {e}");
                                 }
-                                
+
                                 // Final wait with timeout
                                 let _ = tokio::time::timeout(
                                     std::time::Duration::from_secs(2),
                                     process.wait(),
-                                ).await;
+                                )
+                                .await;
                             }
                         }
                     }
@@ -538,15 +545,14 @@ impl SubprocessCliTransport {
                             let stderr = self.collect_stderr_final().await;
                             return Err(SdkError::stream_with_context(
                                 format!("Failed to kill process: {}", e),
-                                format!("stderr: {}", stderr)
+                                format!("stderr: {}", stderr),
                             ));
                         }
-                        
+
                         // Wait for kill to take effect
-                        let _ = tokio::time::timeout(
-                            std::time::Duration::from_secs(2),
-                            process.wait(),
-                        ).await;
+                        let _ =
+                            tokio::time::timeout(std::time::Duration::from_secs(2), process.wait())
+                                .await;
                     }
                 }
             }
@@ -566,7 +572,7 @@ impl SubprocessCliTransport {
             unsafe {
                 if libc::kill(pid as i32, signal) == -1 {
                     return Err(SdkError::transport(format!(
-                        "Failed to send signal {} to process {}", signal, pid
+                        "Failed to send signal {signal} to process {pid}"
                     )));
                 }
             }
@@ -575,28 +581,30 @@ impl SubprocessCliTransport {
     }
 
     /// Collect final stderr output during shutdown.
-    /// 
+    ///
     /// This method attempts to read any remaining stderr content
     /// that might contain important error information.
     async fn collect_stderr_final(&mut self) -> String {
         if let Some(ref mut stderr) = self.stderr_stream {
             let mut stderr_content = String::new();
             let mut line = String::new();
-            
+
             // Try to read remaining stderr with a reasonable timeout
             let start_time = std::time::Instant::now();
             let max_duration = std::time::Duration::from_millis(500);
-            
+
             while start_time.elapsed() < max_duration {
                 match tokio::time::timeout(
                     std::time::Duration::from_millis(50),
                     stderr.read_line(&mut line),
-                ).await {
+                )
+                .await
+                {
                     Ok(Ok(0)) => break, // EOF
                     Ok(Ok(_)) => {
                         stderr_content.push_str(&line);
                         line.clear();
-                        
+
                         // Limit stderr collection
                         if stderr_content.len() > 10240 {
                             stderr_content.push_str("\n... (stderr truncated)");
@@ -606,7 +614,7 @@ impl SubprocessCliTransport {
                     Ok(Err(_)) | Err(_) => break, // Error or timeout
                 }
             }
-            
+
             stderr_content
         } else {
             String::new()
@@ -614,30 +622,34 @@ impl SubprocessCliTransport {
     }
 
     /// Collect stderr output for error reporting.
-    /// 
+    ///
     /// This method attempts to read available stderr content with timeout
     /// to avoid blocking indefinitely while still capturing error information.
+    #[allow(dead_code)]
     async fn collect_stderr(&mut self) -> Result<String> {
         if let Some(ref mut stderr) = self.stderr_stream {
             let mut stderr_content = String::new();
             let mut line = String::new();
-            
+
             // Try to read available stderr content with timeout
             let start_time = std::time::Instant::now();
             let max_duration = std::time::Duration::from_millis(200);
-            
+
             while start_time.elapsed() < max_duration {
                 match tokio::time::timeout(
                     std::time::Duration::from_millis(50),
                     stderr.read_line(&mut line),
-                ).await {
+                )
+                .await
+                {
                     Ok(Ok(0)) => break, // EOF
                     Ok(Ok(_)) => {
                         stderr_content.push_str(&line);
                         line.clear();
-                        
+
                         // Limit stderr collection to prevent memory issues
-                        if stderr_content.len() > 10240 { // 10KB limit
+                        if stderr_content.len() > 10240 {
+                            // 10KB limit
                             stderr_content.push_str("\n... (stderr truncated)");
                             break;
                         }
@@ -645,7 +657,7 @@ impl SubprocessCliTransport {
                     Ok(Err(_)) | Err(_) => break, // Error or timeout
                 }
             }
-            
+
             Ok(stderr_content)
         } else {
             Ok(String::new())
@@ -653,7 +665,7 @@ impl SubprocessCliTransport {
     }
 
     /// Receive messages from the CLI as an async stream.
-    /// 
+    ///
     /// This method returns a stream that:
     /// - Handles robust JSON buffering for split and concatenated messages
     /// - Provides proper backpressure handling
@@ -665,7 +677,7 @@ impl SubprocessCliTransport {
             if let Some(ref mut stdout) = self.stdout_stream {
                 let mut buffer = JsonBuffer::new();
                 let mut line = String::new();
-                
+
                 // We'll collect stderr synchronously when needed instead of spawning a task
                 // to avoid lifetime issues with the async stream
 
@@ -688,7 +700,7 @@ impl SubprocessCliTransport {
                     }
 
                     line.clear();
-                    
+
                     // Use select to handle both stdout reading and potential cancellation
                     tokio::select! {
                         read_result = stdout.read_line(&mut line) => {
@@ -724,7 +736,7 @@ impl SubprocessCliTransport {
                                 Ok(bytes_read) => {
                                     // Data received - append to buffer and try parsing
                                     buffer.append(&line);
-                                    
+
                                     // Parse all available complete JSON objects
                                     loop {
                                         match buffer.try_parse_and_clear() {
@@ -744,7 +756,7 @@ impl SubprocessCliTransport {
                                             }
                                         }
                                     }
-                                    
+
                                     // Yield control to allow for cancellation and backpressure
                                     if bytes_read > 0 {
                                         tokio::task::yield_now().await;
@@ -753,11 +765,11 @@ impl SubprocessCliTransport {
                                 Err(e) => {
                                     // I/O error - try to collect stderr synchronously
                                     let stderr_content = self.collect_stderr_sync().await.unwrap_or_default();
-                                    
+
                                     if !stderr_content.is_empty() {
                                         yield Err(SdkError::stream_with_context(
-                                            format!("I/O error reading from CLI: {}", e),
-                                            format!("stderr: {}", stderr_content)
+                                            format!("I/O error reading from CLI: {e}"),
+                                            format!("stderr: {stderr_content}")
                                         ));
                                     } else {
                                         yield Err(SdkError::CliConnection(e));
@@ -783,32 +795,35 @@ impl SubprocessCliTransport {
     }
 
     /// Collect stderr output synchronously with timeout.
-    /// 
+    ///
     /// This method attempts to read available stderr content without blocking
     /// indefinitely, useful for error reporting when I/O errors occur.
     async fn collect_stderr_sync(&mut self) -> Result<String> {
         if let Some(ref mut stderr) = self.stderr_stream {
             let mut stderr_content = String::new();
             let mut line = String::new();
-            
+
             // Read stderr with short timeout to avoid blocking
             while let Ok(Ok(bytes_read)) = tokio::time::timeout(
                 std::time::Duration::from_millis(50),
                 stderr.read_line(&mut line),
-            ).await {
+            )
+            .await
+            {
                 if bytes_read == 0 {
                     break; // EOF
                 }
                 stderr_content.push_str(&line);
                 line.clear();
-                
+
                 // Limit stderr collection to prevent memory issues
-                if stderr_content.len() > 10240 { // 10KB limit
+                if stderr_content.len() > 10240 {
+                    // 10KB limit
                     stderr_content.push_str("\n... (stderr truncated)");
                     break;
                 }
             }
-            
+
             Ok(stderr_content)
         } else {
             Ok(String::new())
@@ -826,7 +841,7 @@ impl SubprocessCliTransport {
                 "messages": messages,
                 "options": options
             });
-            
+
             let request_str = serde_json::to_string(&request)?;
             stdin.write_all(request_str.as_bytes()).await?;
             stdin.write_all(b"\n").await?;
@@ -839,7 +854,7 @@ impl SubprocessCliTransport {
     pub async fn interrupt(&mut self) -> Result<()> {
         let request_id = self.request_counter.fetch_add(1, Ordering::SeqCst);
         let request_id_str = request_id.to_string();
-        
+
         let control_request = serde_json::json!({
             "type": "control",
             "request_id": request_id_str,
@@ -872,7 +887,7 @@ impl SubprocessCliTransport {
     async fn wait_for_control_response(&self, request_id: &str) -> Result<()> {
         let timeout_duration = std::time::Duration::from_secs(5);
         let start_time = std::time::Instant::now();
-        
+
         loop {
             // Check if we have a response
             {
@@ -887,15 +902,17 @@ impl SubprocessCliTransport {
                     }
                 }
             }
-            
+
             // Check timeout
             if start_time.elapsed() > timeout_duration {
                 // Clean up pending request
                 let mut pending = self.pending_control_responses.lock().unwrap();
                 pending.remove(request_id);
-                return Err(SdkError::control_timeout(timeout_duration.as_millis() as u64));
+                return Err(SdkError::control_timeout(
+                    timeout_duration.as_millis() as u64
+                ));
             }
-            
+
             // Wait a bit before checking again
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
@@ -921,9 +938,11 @@ impl SubprocessCliTransport {
                 return Ok(());
             }
         }
-        
+
         // Unknown or unexpected control response - log but don't error
-        eprintln!("Warning: Received unexpected control response: {:?}", response);
+        eprintln!(
+            "Warning: Received unexpected control response: {response:?}"
+        );
         Ok(())
     }
 }
@@ -941,7 +960,7 @@ impl Drop for SubprocessCliTransport {
 }
 
 /// Buffer for handling JSON parsing from streaming input.
-/// 
+///
 /// This buffer handles complex scenarios including:
 /// - Split JSON messages across multiple reads
 /// - Multiple concatenated JSON objects in a single read
@@ -965,6 +984,7 @@ impl JsonBuffer {
         }
     }
 
+    #[allow(dead_code)]
     fn with_max_size(max_size: usize) -> Self {
         Self {
             buffer: String::with_capacity(Self::DEFAULT_CAPACITY.min(max_size)),
@@ -974,7 +994,7 @@ impl JsonBuffer {
     }
 
     /// Try to parse complete JSON objects from the buffer.
-    /// 
+    ///
     /// This method handles multiple scenarios:
     /// 1. Single complete JSON object
     /// 2. Multiple concatenated JSON objects
@@ -1006,7 +1026,7 @@ impl JsonBuffer {
     }
 
     /// Parse multiple JSON objects from the buffer.
-    /// 
+    ///
     /// This handles cases where multiple JSON objects are concatenated
     /// in the buffer, separated by whitespace or newlines.
     fn parse_multiple_objects(&mut self) -> Result<()> {
@@ -1018,19 +1038,24 @@ impl JsonBuffer {
             match self.find_json_object_end(remaining) {
                 Some(end_pos) => {
                     let json_str = &remaining[..end_pos];
-                    
+
                     // Try to parse this JSON object
                     match serde_json::from_str(json_str) {
                         Ok(value) => {
                             self.parsed_objects.push(value);
                             consumed_bytes += end_pos;
-                            
+
                             // Move to the next part of the buffer
                             remaining = remaining[end_pos..].trim_start();
-                            
+
                             // Account for whitespace we trimmed
-                            while consumed_bytes < self.buffer.len() 
-                                && self.buffer.chars().nth(consumed_bytes).map_or(false, |c| c.is_whitespace()) {
+                            while consumed_bytes < self.buffer.len()
+                                && self
+                                    .buffer
+                                    .chars()
+                                    .nth(consumed_bytes)
+                                    .is_some_and(|c| c.is_whitespace())
+                            {
                                 consumed_bytes += 1;
                             }
                         }
@@ -1066,17 +1091,17 @@ impl JsonBuffer {
     }
 
     /// Find the end position of a JSON object in the string.
-    /// 
+    ///
     /// This uses a simple bracket/brace counting approach to find
     /// where a JSON object ends, handling nested structures.
     fn find_json_object_end(&self, s: &str) -> Option<usize> {
-        let mut chars = s.char_indices().peekable();
+        let chars = s.char_indices();
         let mut depth = 0;
         let mut in_string = false;
         let mut escape_next = false;
         let mut started = false;
 
-        while let Some((i, ch)) = chars.next() {
+        for (i, ch) in chars {
             if escape_next {
                 escape_next = false;
                 continue;
@@ -1111,10 +1136,10 @@ impl JsonBuffer {
         if self.buffer.len() + data.len() > self.max_size {
             // Try to make room by parsing what we can first
             let _ = self.parse_multiple_objects();
-            
+
             // If still too large after parsing, we'll let try_parse_and_clear handle the error
         }
-        
+
         self.buffer.push_str(data);
     }
 
@@ -1129,6 +1154,7 @@ impl JsonBuffer {
     }
 
     /// Clear all buffered data and parsed objects.
+    #[allow(dead_code)]
     fn clear(&mut self) {
         self.buffer.clear();
         self.parsed_objects.clear();

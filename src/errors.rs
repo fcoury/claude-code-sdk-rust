@@ -369,7 +369,10 @@ impl SdkError {
                 "message": message,
                 "context": context,
             }),
-            Self::Interrupt { message, request_id } => json!({
+            Self::Interrupt {
+                message,
+                request_id,
+            } => json!({
                 "category": "control",
                 "type": "interrupt",
                 "message": message,
@@ -454,10 +457,10 @@ mod tests {
     fn test_error_creation() {
         let error = SdkError::message_parse("Invalid format", json!({"invalid": true}));
         assert!(matches!(error, SdkError::MessageParse { .. }));
-        
+
         let error = SdkError::process(Some(1), "Command failed");
         assert!(matches!(error, SdkError::Process { .. }));
-        
+
         let error = SdkError::transport("Connection lost");
         assert!(matches!(error, SdkError::Transport(_)));
     }
@@ -482,7 +485,7 @@ mod tests {
     fn test_debug_data() {
         let error = SdkError::message_parse("Invalid format", json!({"test": "data"}));
         let debug_data = error.debug_data();
-        
+
         assert_eq!(debug_data["category"], "parsing");
         assert_eq!(debug_data["type"], "message_parse");
         assert_eq!(debug_data["raw_data"], json!({"test": "data"}));
@@ -499,18 +502,21 @@ mod tests {
 
     #[test]
     fn test_error_extension_trait() {
-        let result: std::result::Result<i32, std::io::Error> = 
+        let result: std::result::Result<i32, std::io::Error> =
             Err(std::io::Error::new(std::io::ErrorKind::NotFound, "test"));
-        
+
         let sdk_result = result.with_static_context("Testing context");
         assert!(sdk_result.is_err());
-        assert!(matches!(sdk_result.unwrap_err(), SdkError::CliConnection(_)));
+        assert!(matches!(
+            sdk_result.unwrap_err(),
+            SdkError::CliConnection(_)
+        ));
     }
 
     #[test]
     fn test_error_display() {
         let error = SdkError::incompatible_cli_version("1.0.0", "0.9.0");
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("Incompatible CLI version"));
         assert!(display.contains("1.0.0"));
         assert!(display.contains("0.9.0"));
@@ -520,7 +526,7 @@ mod tests {
     fn test_structured_error_data() {
         let error = SdkError::process(Some(1), "stderr output");
         let debug_data = error.debug_data();
-        
+
         assert_eq!(debug_data["exit_code"], 1);
         assert_eq!(debug_data["stderr"], "stderr output");
         assert_eq!(debug_data["category"], "process");

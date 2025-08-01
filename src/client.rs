@@ -127,15 +127,17 @@ impl Default for InternalClient {
 ///     // Send first message
 ///     client.query(PromptInput::from("Hello, Claude!"), None).await?;
 ///     
-///     // Receive response
-///     let responses = client.receive_response().await?;
-///     tokio::pin!(responses);
-///     
-///     while let Some(message) = responses.next().await {
-///         match message? {
-///             Message::Assistant(msg) => println!("Claude: {:?}", msg.content),
-///             Message::Result(_) => break,
-///             _ => {}
+///     // Receive response (scope the stream to avoid borrowing conflicts)
+///     {
+///         let responses = client.receive_response().await?;
+///         tokio::pin!(responses);
+///         
+///         while let Some(message) = responses.next().await {
+///             match message? {
+///                 Message::Assistant(msg) => println!("Claude: {:?}", msg.content),
+///                 Message::Result(_) => break,
+///                 _ => {}
+///             }
 ///         }
 ///     }
 ///     
@@ -307,13 +309,15 @@ impl ClaudeSDKClient {
     ///     // Send a text message
     ///     client.query(PromptInput::from("Hello, Claude!"), None).await?;
     ///     
-    ///     // Receive the response
-    ///     let responses = client.receive_response().await?;
-    ///     tokio::pin!(responses);
-    ///     
-    ///     while let Some(message) = responses.next().await {
-    ///         // Process response messages...
-    ///         # break;
+    ///     // Receive the response (scope the stream to avoid borrowing conflicts)
+    ///     {
+    ///         let responses = client.receive_response().await?;
+    ///         tokio::pin!(responses);
+    ///         
+    ///         while let Some(message) = responses.next().await {
+    ///             // Process response messages...
+    ///             # break;
+    ///         }
     ///     }
     ///     
     ///     client.disconnect().await?;
@@ -409,19 +413,22 @@ impl ClaudeSDKClient {
     ///     
     ///     client.query(PromptInput::from("Hello!"), None).await?;
     ///     
-    ///     let messages = client.receive_messages().await?;
-    ///     tokio::pin!(messages);
-    ///     
-    ///     while let Some(message_result) = messages.next().await {
-    ///         match message_result? {
-    ///             Message::Assistant(msg) => {
-    ///                 println!("Claude: {:?}", msg.content);
+    ///     // Scope the stream to avoid borrowing conflicts
+    ///     {
+    ///         let messages = client.receive_messages().await?;
+    ///         tokio::pin!(messages);
+    ///         
+    ///         while let Some(message_result) = messages.next().await {
+    ///             match message_result? {
+    ///                 Message::Assistant(msg) => {
+    ///                     println!("Claude: {:?}", msg.content);
+    ///                 }
+    ///                 Message::Result(_) => {
+    ///                     println!("Query completed");
+    ///                     break; // Manually break on result
+    ///                 }
+    ///                 _ => {}
     ///             }
-    ///             Message::Result(_) => {
-    ///                 println!("Query completed");
-    ///                 break; // Manually break on result
-    ///             }
-    ///             _ => {}
     ///         }
     ///     }
     ///     
@@ -468,19 +475,22 @@ impl ClaudeSDKClient {
     ///     
     ///     client.query(PromptInput::from("Hello!"), None).await?;
     ///     
-    ///     let responses = client.receive_response().await?;
-    ///     tokio::pin!(responses);
-    ///     
-    ///     while let Some(message) = responses.next().await {
-    ///         match message? {
-    ///             Message::Assistant(msg) => {
-    ///                 println!("Claude: {:?}", msg.content);
+    ///     // Scope the stream to avoid borrowing conflicts
+    ///     {
+    ///         let responses = client.receive_response().await?;
+    ///         tokio::pin!(responses);
+    ///         
+    ///         while let Some(message) = responses.next().await {
+    ///             match message? {
+    ///                 Message::Assistant(msg) => {
+    ///                     println!("Claude: {:?}", msg.content);
+    ///                 }
+    ///                 Message::Result(result) => {
+    ///                     println!("Completed in {}ms", result.duration_ms);
+    ///                     // Stream automatically ends here
+    ///                 }
+    ///                 _ => {}
     ///             }
-    ///             Message::Result(result) => {
-    ///                 println!("Completed in {}ms", result.duration_ms);
-    ///                 // Stream automatically ends here
-    ///             }
-    ///             _ => {}
     ///         }
     ///     }
     ///     
@@ -708,7 +718,8 @@ impl ClaudeSDKClient {
     /// assert!(new_id.starts_with("session_"));
     /// assert_eq!(client.current_session_id(), new_id);
     ///
-    /// // Each call generates a unique ID
+    /// // Each call generates a unique ID (add small delay to ensure uniqueness)
+    /// std::thread::sleep(std::time::Duration::from_millis(1));
     /// let another_id = client.new_session();
     /// assert_ne!(new_id, another_id);
     /// ```

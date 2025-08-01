@@ -134,6 +134,30 @@ pub enum ToolResultContent {
 }
 
 /// Permission modes for Claude Code operations.
+///
+/// This enum controls how Claude handles permission requests for potentially
+/// destructive operations like file edits or command execution.
+///
+/// # Examples
+///
+/// ```rust
+/// use claude_code_sdk::{ClaudeCodeOptions, PermissionMode};
+///
+/// // Require explicit permission for each operation
+/// let strict_options = ClaudeCodeOptions::builder()
+///     .permission_mode(PermissionMode::Default)
+///     .build();
+///
+/// // Automatically accept edit operations
+/// let permissive_options = ClaudeCodeOptions::builder()
+///     .permission_mode(PermissionMode::AcceptEdits)
+///     .build();
+///
+/// // Bypass all permission prompts (use with caution)
+/// let bypass_options = ClaudeCodeOptions::builder()
+///     .permission_mode(PermissionMode::BypassPermissions)
+///     .build();
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PermissionMode {
     /// Default permission behavior
@@ -148,6 +172,59 @@ pub enum PermissionMode {
 }
 
 /// Configuration for MCP (Model Context Protocol) servers.
+///
+/// MCP servers provide additional capabilities to Claude through standardized protocols.
+/// This enum supports different transport mechanisms for connecting to MCP servers.
+///
+/// # Examples
+///
+/// ## Standard I/O Server
+///
+/// ```rust
+/// use claude_code_sdk::{ClaudeCodeOptions, McpServerConfig};
+/// use std::collections::HashMap;
+///
+/// let mut env = HashMap::new();
+/// env.insert("LOG_LEVEL".to_string(), "info".to_string());
+///
+/// let options = ClaudeCodeOptions::builder()
+///     .mcp_server("filesystem", McpServerConfig::Stdio {
+///         command: "npx".to_string(),
+///         args: Some(vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()]),
+///         env: Some(env),
+///     })
+///     .build();
+/// ```
+///
+/// ## Server-Sent Events Server
+///
+/// ```rust
+/// use claude_code_sdk::{ClaudeCodeOptions, McpServerConfig};
+/// use std::collections::HashMap;
+///
+/// let mut headers = HashMap::new();
+/// headers.insert("Authorization".to_string(), "Bearer token".to_string());
+///
+/// let options = ClaudeCodeOptions::builder()
+///     .mcp_server("remote", McpServerConfig::Sse {
+///         url: "https://api.example.com/mcp".to_string(),
+///         headers: Some(headers),
+///     })
+///     .build();
+/// ```
+///
+/// ## HTTP Server
+///
+/// ```rust
+/// use claude_code_sdk::{ClaudeCodeOptions, McpServerConfig};
+///
+/// let options = ClaudeCodeOptions::builder()
+///     .mcp_server("http_server", McpServerConfig::Http {
+///         url: "http://localhost:8080/mcp".to_string(),
+///         headers: None,
+///     })
+///     .build();
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum McpServerConfig {
@@ -181,6 +258,50 @@ pub enum McpServerConfig {
 }
 
 /// Configuration options for Claude Code queries.
+///
+/// This struct contains all the configuration options that can be passed to Claude Code
+/// queries. Use the builder pattern via [`ClaudeCodeOptions::builder()`] for ergonomic
+/// configuration.
+///
+/// # Examples
+///
+/// ## Basic Configuration
+///
+/// ```rust
+/// use claude_code_sdk::{ClaudeCodeOptions, PermissionMode};
+/// use std::path::PathBuf;
+///
+/// let options = ClaudeCodeOptions::builder()
+///     .system_prompt("You are a helpful coding assistant")
+///     .permission_mode(PermissionMode::AcceptEdits)
+///     .cwd(PathBuf::from("./my-project"))
+///     .build();
+/// ```
+///
+/// ## Advanced Configuration
+///
+/// ```rust
+/// use claude_code_sdk::{ClaudeCodeOptions, PermissionMode, McpServerConfig};
+/// use std::collections::HashMap;
+/// use std::path::PathBuf;
+///
+/// let options = ClaudeCodeOptions::builder()
+///     .system_prompt("You are an expert Rust developer")
+///     .append_system_prompt("Always write safe, idiomatic code")
+///     .permission_mode(PermissionMode::BypassPermissions)
+///     .allowed_tools(vec!["file_editor".to_string(), "bash".to_string()])
+///     .disallowed_tools(vec!["web_search".to_string()])
+///     .max_thinking_tokens(2000)
+///     .max_turns(10)
+///     .cwd(PathBuf::from("./rust-project"))
+///     .model("claude-3-5-sonnet-20241022")
+///     .mcp_server("filesystem", McpServerConfig::Stdio {
+///         command: "npx".to_string(),
+///         args: Some(vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()]),
+///         env: None,
+///     })
+///     .build();
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct ClaudeCodeOptions {
     /// List of allowed tools
@@ -223,6 +344,24 @@ impl ClaudeCodeOptions {
 }
 
 /// Builder for ClaudeCodeOptions with fluent interface.
+///
+/// This builder provides a fluent API for constructing [`ClaudeCodeOptions`] instances.
+/// All methods return `Self` to enable method chaining.
+///
+/// # Examples
+///
+/// ```rust
+/// use claude_code_sdk::{ClaudeCodeOptions, PermissionMode};
+/// use std::path::PathBuf;
+///
+/// let options = ClaudeCodeOptions::builder()
+///     .system_prompt("You are a helpful assistant")
+///     .permission_mode(PermissionMode::AcceptEdits)
+///     .allowed_tools(vec!["file_editor".to_string()])
+///     .max_thinking_tokens(1500)
+///     .cwd(PathBuf::from("./workspace"))
+///     .build();
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct ClaudeCodeOptionsBuilder {
     inner: ClaudeCodeOptions,

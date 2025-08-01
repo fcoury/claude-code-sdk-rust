@@ -108,23 +108,36 @@
 //! All operations return [`Result<T>`] with detailed [`SdkError`] information:
 //!
 //! ```rust,no_run
-//! use claude_code_sdk::{query, SdkError};
+//! use claude_code_sdk::{query, SdkError, Message};
+//! use tokio_stream::StreamExt;
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     match query("Hello", None).await {
-//!         Ok(stream) => {
-//!             // Process stream...
-//!         }
-//!         Err(SdkError::CliNotFound(_)) => {
-//!             eprintln!("Please install the Claude Code CLI:");
-//!             eprintln!("npm install -g @anthropic-ai/claude-code");
-//!         }
-//!         Err(e) => {
-//!             eprintln!("Error: {}", e);
-//!             if e.is_recoverable() {
-//!                 eprintln!("This error might be recoverable by retrying");
+//!     let stream = query("Hello", None).await;
+//!     tokio::pin!(stream);
+//!     
+//!     while let Some(message_result) = stream.next().await {
+//!         match message_result {
+//!             Ok(Message::Assistant(msg)) => {
+//!                 println!("Claude: {:?}", msg.content);
 //!             }
+//!             Ok(Message::Result(_)) => {
+//!                 println!("Query completed");
+//!                 break;
+//!             }
+//!             Err(SdkError::CliNotFound(_)) => {
+//!                 eprintln!("Please install the Claude Code CLI:");
+//!                 eprintln!("npm install -g @anthropic-ai/claude-code");
+//!                 break;
+//!             }
+//!             Err(e) => {
+//!                 eprintln!("Error: {}", e);
+//!                 if e.is_recoverable() {
+//!                     eprintln!("This error might be recoverable by retrying");
+//!                 }
+//!                 break;
+//!             }
+//!             _ => {}
 //!         }
 //!     }
 //! }
@@ -321,7 +334,8 @@ use tokio_stream::Stream;
 ///     // All of these work due to AsRef<str>
 ///     let _stream1 = query("string literal", None).await;
 ///     let _stream2 = query(String::from("owned string"), None).await;
-///     let _stream3 = query(&"reference to string".to_string(), None).await;
+///     let owned_string = "reference to string".to_string();
+///     let _stream3 = query(&owned_string, None).await;
 ///     
 ///     Ok(())
 /// }

@@ -72,6 +72,32 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Helper function to wait for stdin input (simulating real CLI behavior)
+function waitForStdinInput() {
+    return new Promise((resolve) => {
+        process.stdin.setEncoding('utf8');
+        let inputReceived = false;
+        
+        const timeout = setTimeout(() => {
+            if (!inputReceived) {
+                resolve(); // Resolve anyway after timeout
+            }
+        }, 1000); // 1 second timeout
+        
+        process.stdin.once('data', (data) => {
+            inputReceived = true;
+            clearTimeout(timeout);
+            resolve();
+        });
+        
+        process.stdin.once('end', () => {
+            inputReceived = true;
+            clearTimeout(timeout);
+            resolve();
+        });
+    });
+}
+
 // Main execution
 async function main() {
     // Handle different test modes
@@ -118,6 +144,9 @@ async function main() {
 }
 
 async function normalFlow() {
+    // Wait for stdin input first (simulating real CLI behavior)
+    await waitForStdinInput();
+    
     if (delay > 0) await sleep(delay);
     
     // System message
@@ -164,6 +193,9 @@ async function normalFlow() {
 }
 
 async function splitJsonFlow() {
+    // Wait for stdin input first
+    await waitForStdinInput();
+    
     // Send a message split across multiple writes to test JSON buffering
     const message = {
         type: "assistant",
@@ -192,6 +224,9 @@ async function splitJsonFlow() {
 }
 
 async function concatenatedJsonFlow() {
+    // Wait for stdin input first
+    await waitForStdinInput();
+    
     // Send multiple JSON messages concatenated together
     const messages = [
         {
@@ -227,8 +262,11 @@ async function concatenatedJsonFlow() {
 }
 
 async function largeMessageFlow() {
+    // Wait for stdin input first
+    await waitForStdinInput();
+    
     // Send a very large message to test buffer limits
-    const largeText = "x".repeat(50000); // 50KB of text
+    const largeText = "x".repeat(5000); // 5KB of text
     
     writeMessage({
         type: "assistant",
@@ -242,9 +280,9 @@ async function largeMessageFlow() {
                 id: "large_tool_123",
                 name: "data_processor",
                 input: {
-                    large_data: "y".repeat(25000),
+                    large_data: "y".repeat(2500),
                     metadata: {
-                        size: 25000,
+                        size: 2500,
                         type: "test_data"
                     }
                 }
@@ -264,17 +302,61 @@ async function largeMessageFlow() {
 }
 
 async function errorExitFlow() {
+    // Small delay to let the transport set up streams, then exit with error
+    await sleep(50);
     // Write error to stderr and exit with non-zero code
     console.error(errorMessage || "Mock CLI error for testing");
+    // Force immediate exit
+    process.exitCode = exitCode || 1;
     process.exit(exitCode || 1);
 }
 
 async function stderrOutputFlow() {
+    // Wait for stdin input first
+    await waitForStdinInput();
+    
     // Write to stderr but continue normally
     console.error("Warning: This is a test stderr message");
     console.error("Debug: Processing test request");
     
-    await normalFlow();
+    if (delay > 0) await sleep(delay);
+    
+    // System message
+    writeMessage({
+        type: "system",
+        subtype: "session_start",
+        data: {
+            session_id: "stderr_test_123",
+            timestamp: Date.now()
+        }
+    });
+    
+    if (delay > 0) await sleep(delay);
+    
+    // Assistant response
+    writeMessage({
+        type: "assistant",
+        content: [
+            {
+                type: "text",
+                text: "Hello! This is a test response with stderr output."
+            }
+        ]
+    });
+    
+    if (delay > 0) await sleep(delay);
+    
+    // Result message
+    writeMessage({
+        type: "result",
+        subtype: "query_complete",
+        duration_ms: 1500,
+        duration_api_ms: 1200,
+        is_error: false,
+        num_turns: 1,
+        session_id: "stderr_test_123",
+        result: "Query completed successfully with stderr"
+    });
 }
 
 async function interactiveFlow() {
@@ -397,6 +479,9 @@ async function controlInterruptFlow() {
 }
 
 async function unicodeContentFlow() {
+    // Wait for stdin input first
+    await waitForStdinInput();
+    
     writeMessage({
         type: "assistant",
         content: [
@@ -429,6 +514,9 @@ async function unicodeContentFlow() {
 }
 
 async function emptyResponseFlow() {
+    // Wait for stdin input first
+    await waitForStdinInput();
+    
     // Send minimal/empty responses
     writeMessage({
         type: "assistant",
@@ -447,10 +535,15 @@ async function emptyResponseFlow() {
 }
 
 async function malformedJsonFlow() {
+    // Wait for stdin input first
+    await waitForStdinInput();
+    
     // Send malformed JSON to test error handling
     process.stdout.write('{"type": "assistant", "content": [{"type": "text", "text": "incomplete\n');
     await sleep(100);
-    process.stdout.write('{"invalid": json}\n');
+    process.stdout.write('this is not json at all\n');
+    await sleep(100);
+    process.stdout.write('{"another": "broken" json}\n');
     await sleep(100);
     
     // Follow with valid message

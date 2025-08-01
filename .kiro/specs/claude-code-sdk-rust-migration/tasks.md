@@ -134,7 +134,7 @@
     - Ensure consistent error handling across all public interfaces
     - _Requirements: 7.1, 7.2_
 
-- [-] 10. Create comprehensive test suite
+- [x] 10. Create comprehensive test suite
 
   - [x] 10.1 Write unit tests for type system
 
@@ -143,29 +143,29 @@
     - Test error handling and error message formatting
     - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 2.3_
 
-  - [ ] 10.2 Create integration tests with mock CLI
+  - [x] 10.2 Create integration tests with mock CLI
 
     - Build mock CLI script that simulates claude-code behavior
     - Test transport layer with various JSON buffering scenarios
     - Verify process lifecycle management and cleanup
     - _Requirements: 3.1, 3.2, 3.3, 6.1, 6.2_
 
-  - [ ] 10.3 Add stream handling and client tests
+  - [x] 10.3 Add stream handling and client tests
     - Test async stream behavior and cancellation
     - Verify interactive client functionality and state management
     - Test error propagation through stream processing
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 7.1, 7.2_
 
-- [ ] 11. Add examples and documentation
+- [x] 11. Add examples and documentation
 
-  - [ ] 11.1 Create runnable examples
+  - [x] 11.1 Create runnable examples
 
     - Write quick_start.rs example demonstrating basic query usage
     - Create streaming_mode.rs example showing interactive client usage
     - Add error_handling.rs example demonstrating proper error management
     - _Requirements: 4.1, 5.1, 2.1_
 
-  - [ ] 11.2 Write comprehensive README and documentation
+  - [x] 11.2 Write comprehensive README and documentation
     - Create README.md with installation instructions and usage examples
     - Add doc comments with examples for all public APIs
     - Document error handling patterns and best practices

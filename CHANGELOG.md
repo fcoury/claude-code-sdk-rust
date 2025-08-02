@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resource management with explicit cleanup
 - Comprehensive examples and documentation
 
+### Fixed
+- CLI integration issues with argument generation and process management
+- Message parsing for nested CLI output format (message.content structure)
+- JSON parsing errors from tool output and trailing content
+- Transport layer CLI flag usage (--print, --allowedTools, --append-system-prompt)
+- Streaming functionality in examples (quick_start and streaming_mode now work)
+- Removed unsupported CLI options that caused process failures
+
 ### Features
 - **Type Safety**: Strongly-typed message and configuration structures
 - **Async Streams**: Native integration with `tokio_stream::Stream`

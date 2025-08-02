@@ -36,9 +36,16 @@ fn parse_user_message(
     obj: &serde_json::Map<String, serde_json::Value>,
     data: &serde_json::Value,
 ) -> Result<Message> {
-    let content = obj
-        .get("content")
-        .ok_or_else(|| SdkError::message_parse("Missing 'content' field", data.clone()))?;
+    // Try to get content from nested message field first, then fall back to top level
+    let content = if let Some(message) = obj.get("message") {
+        message
+            .as_object()
+            .and_then(|msg_obj| msg_obj.get("content"))
+            .ok_or_else(|| SdkError::message_parse("Missing 'content' field in message", data.clone()))?
+    } else {
+        obj.get("content")
+            .ok_or_else(|| SdkError::message_parse("Missing 'content' field", data.clone()))?
+    };
 
     let message_content = parse_message_content(content, data)?;
 
@@ -52,9 +59,16 @@ fn parse_assistant_message(
     obj: &serde_json::Map<String, serde_json::Value>,
     data: &serde_json::Value,
 ) -> Result<Message> {
-    let content = obj
-        .get("content")
-        .ok_or_else(|| SdkError::message_parse("Missing 'content' field", data.clone()))?;
+    // Try to get content from nested message field first, then fall back to top level
+    let content = if let Some(message) = obj.get("message") {
+        message
+            .as_object()
+            .and_then(|msg_obj| msg_obj.get("content"))
+            .ok_or_else(|| SdkError::message_parse("Missing 'content' field in message", data.clone()))?
+    } else {
+        obj.get("content")
+            .ok_or_else(|| SdkError::message_parse("Missing 'content' field", data.clone()))?
+    };
 
     let content_blocks = content
         .as_array()

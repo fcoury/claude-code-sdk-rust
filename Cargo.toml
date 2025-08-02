@@ -76,3 +76,7 @@ path = "examples/streaming_mode.rs"
 [[example]]
 name = "error_handling"
 path = "examples/error_handling.rs"
+
+[[bin]]
+name = "debug_cli"
+path = "debug_cli.rs"
